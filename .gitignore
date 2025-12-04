@@ -1,0 +1,80 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual Environments
+venv/
+env/
+ENV/
+new_venv/
+.venv/
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Data files (large datasets)
+Data/
+dataset/
+augmented_dataset/
+
+# Model files (large)
+*.pth
+*.pkl
+*.h5
+*.ckpt
+*.pt
+
+# Generated outputs
+visualizations/
+gradcam_heatmaps/
+*.png
+*.jpg
+*.jpeg
+*.tiff
+*.tif
+*.npz
+
+# Results and outputs
+illuminant_estimation_results.npy
+illuminant_estimation_results.png
+illuminant_examples.png
+confusion_matrix.png
+gradcam_grid*.png
+training_curves.png
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+
+# Environment variables
+.env
+.env.local
+
