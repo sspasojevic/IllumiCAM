@@ -5,22 +5,35 @@ Final_Project/
 ├── requirements.txt                    # Python dependencies
 ├── README.md                           # This file
 │
-├── config.py                           # Configuration constants and hyperparameters
-├── model.py                            # IlluminantCNN model definition
-├── data_loader.py                      # Data loading utilities and transforms
-│
-├── train.py                            # Training script
-├── evaluate.py                         # Evaluation script for test set
-├── gradcam.py                          # Grad-CAM visualization script
-├── illuminant_estimator.py            # Continuous illuminant estimation
-│
-├── augment_split_data.py               # Data augmentation and train/val/test splitting
-├── visualize_image.py                  # Image visualization tool (CLI)
+├── src/                                # Source code
+│   ├── __init__.py                     # Package initialization
+│   ├── models/                         # Model implementations
+│   │   ├── __init__.py                 # Package initialization
+│   │   ├── model.py                    # IlluminantCNN (standard model)
+│   │   ├── model_confidence.py         # ConfidenceWeightedCNN (FC4-inspired)
+│   │   ├── model_paper.py             # ColorConstancyCNN (AlexNet-based)
+│   │   └── model_illumicam3.py         # IllumiCam3 (Global Average Pooling)
+│   │
+│   ├── data_loader.py                  # Data loading utilities and transforms
+│   │
+│   ├── train.py                        # Training script (supports standard, confidence, paper, illumicam3)
+│   ├── evaluate.py                     # Evaluation script for test set
+│   │
+│   ├── visualize_cam.py                # CAM visualization tool (GradCAM, GradCAM++, ScoreCAM)
+│   ├── visualize_image.py              # Image visualization tool (CLI)
+│   │
+│   └── augment_split_data.py           # Data augmentation and train/val/test splitting
 │
 ├── illuminant_eda.ipynb                # Exploratory Data Analysis notebook
-├── training.ipynb                      # Original training notebook (reference)
 │
 ├── cluster_centers.npy                 # Saved cluster centers (generated from EDA)
+│
+├── saved_models/                       # Trained model weights (excluded from git)
+│   ├── best_illuminant_cnn.pth
+│   ├── best_illuminant_cnn_val_8084.pth
+│   ├── best_illuminant_cnn_confidence.pth
+│   ├── best_paper_model.pth
+│   └── best_illumicam3.pth
 │
 ├── Data/                               # Raw dataset (excluded from git)
 │   ├── Nikon_D810/
@@ -32,10 +45,8 @@ Final_Project/
 │   │       └── *.wp                    # White point files
 │   └── info/                           # Camera characterization data
 │       ├── Info/
-│       │   ├── reference_wps_ccms_nikond810.mat
-│       │   └── ...
-│       └── Nikon_D810_Info/
-│           └── ...
+│       ├── Nikon_D810_Info/
+│       └── Canon_5DSR_Info/
 │
 ├── dataset/                            # Generated dataset (excluded from git)
 │   ├── train/
@@ -50,10 +61,12 @@ Final_Project/
 │       └── [same structure as train]
 │
 └── visualizations/                     # Generated visualizations (excluded from git)
-    ├── training_curves.png
-    ├── confusion_matrix.png
-    ├── gradcam_grid_all_classes.png
-    ├── illuminant_estimation_results.png
-    ├── illuminant_examples.png
+    ├── cams/                           # CAM visualizations
+    │   ├── gradcam_*_*.png
+    │   ├── gradcam++_*_*.png
+    │   └── scorecam_*_*.png
+    ├── evaluate/                       # Evaluation results
+    │   └── confusion_matrix_*.png
+    ├── training_curves_*.png
     └── ...
 ```

@@ -4,7 +4,10 @@ Custom CNN model for illuminant estimation.
 
 import torch
 import torch.nn as nn
-from config import NUM_CLASSES, DROPOUT_RATE
+
+# Hardcoded configuration
+NUM_CLASSES = 5
+DROPOUT_RATE = 0.25
 
 
 class IlluminantCNN(nn.Module):

@@ -26,8 +26,10 @@ from sklearn.cluster import KMeans
 import random
 
 # Configuration
-DATA_ROOT = os.path.join("Data", "Nikon_D810")
-MAT_PATH = "Data/info/Info/reference_wps_ccms_nikond810.mat"
+# Get project root (one level up from src/)
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_ROOT = os.path.join(PROJECT_ROOT, "Data", "Nikon_D810")
+MAT_PATH = os.path.join(PROJECT_ROOT, "Data", "info", "Info", "reference_wps_ccms_nikond810.mat")
 RANDOM_SEED = 42
 
 def load_dataset():
@@ -307,7 +309,7 @@ Examples:
     group.add_argument('--image', type=str, help='Path to image file to preview')
     group.add_argument('--grid', type=int, help='Number of random images to show in grid')
     
-    parser.add_argument('--output', type=str, default='visualizations', 
+    parser.add_argument('--output', type=str, default=os.path.join(PROJECT_ROOT, 'visualizations'), 
                        help='Output directory for saved images (default: visualizations)')
     
     args = parser.parse_args()
