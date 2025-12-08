@@ -33,7 +33,7 @@ augmented_dataset/
 
 # Generated outputs
 visualizations/
-gradcam_heatmaps/
+saved_models/
 *.png
 *.jpg
 *.jpeg

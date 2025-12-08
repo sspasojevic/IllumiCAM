@@ -10,10 +10,12 @@ from tqdm import tqdm
 import warnings
 
 # Configuration
+# Get project root (one level up from src/)
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RANDOM_SEED = 42
 SPLIT_SEED = 1337  # Seed for dataset splitting (matches notebook)
-DATA_ROOT = os.path.join("Data", "Nikon_D810")
-FINAL_DATASET_DIR = "dataset"  # Final output directory with train/val/test structure
+DATA_ROOT = os.path.join(PROJECT_ROOT, "Data", "Nikon_D810")
+FINAL_DATASET_DIR = os.path.join(PROJECT_ROOT, "dataset")  # Final output directory with train/val/test structure
 TARGET_SIZE_STRATEGY = "max" # 'max' (match largest cluster) or integer value
 
 # Set seeds
