@@ -13,6 +13,7 @@ venv/
 env/
 ENV/
 new_venv/
+new_venv_py311/
 .venv/
 
 # Jupyter Notebooks
