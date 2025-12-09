@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import cv2
 
 # Add project root to path for imports
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, PROJECT_ROOT)
 
 from src.lsmi_utils import process_raw_image, load_mask, CLUSTER_NAMES

@@ -10,8 +10,8 @@ from tqdm import tqdm
 import warnings
 
 # Configuration
-# Get project root (one level up from src/)
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Get project root (three levels up from src/data_manipulations/)
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 RANDOM_SEED = 42
 SPLIT_SEED = 1337  # Seed for dataset splitting (matches notebook)
 DATA_ROOT = os.path.join(PROJECT_ROOT, "Data", "Nikon_D810")

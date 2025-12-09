@@ -25,11 +25,11 @@ from PIL import Image
 from scipy.io import loadmat
 
 # Add project root to path
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, PROJECT_ROOT)
 
 # Import from existing modules
-from src.visualize_cam import (
+from src.display_scripts.visualize_cam import (
     MODELS, MODEL_PATHS, CAM_METHODS,
     ModelWrapper, get_available_layers, create_cam_instance,
     MEAN, STD, DEVICE, IMG_SIZE
@@ -413,3 +413,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
