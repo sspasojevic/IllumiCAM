@@ -56,7 +56,7 @@ MODEL_PATHS = {
     'illumicam3': os.path.join(SAVED_MODELS_DIR, 'best_illumicam3.pth')
 }
 
-# Paper-specific hyperparameters
+# Hyperparameters for the model in the paper
 PAPER_BATCH_SIZE = 100
 PAPER_MOMENTUM = 0.9
 PAPER_WEIGHT_DECAY = 0.0005

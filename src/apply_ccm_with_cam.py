@@ -29,7 +29,6 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
 # Import from existing modules
-from src.visualize_image import lin_to_srgb
 from src.visualize_cam import (
     MODELS, MODEL_PATHS, CAM_METHODS,
     ModelWrapper, get_available_layers, create_cam_instance,
@@ -38,14 +37,7 @@ from src.visualize_cam import (
 from src.data_loader import get_datasets # Import to get correct label order
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 
-# Add LSMI utils to path
-LSMI_PATH = os.path.join(PROJECT_ROOT, "Data", "LSMI_Test_Package")
-sys.path.insert(0, LSMI_PATH)
-try:
-    from lsmi_utils import process_raw_image, CLUSTER_NAMES as LSMI_CLUSTER_NAMES
-except ImportError:
-    print("Warning: Could not import lsmi_utils. Falling back to default cluster names.")
-    LSMI_CLUSTER_NAMES = ['Very_Warm', 'Warm', 'Neutral', 'Cool', 'Very_Cool']
+from src.lsmi_utils import process_raw_image
 
 # We need the model's training label order
 _, _, _, TRAIN_LABELS = get_datasets()
@@ -58,9 +50,6 @@ MAT_PATH = os.path.join(PROJECT_ROOT, "Data", "info", "Info", "reference_wps_ccm
 def load_nikon_ccms_fixed():
     """Load Nikon reference WPs/CCMs with robust parsing."""
     print(f"Loading Nikon reference WPs/CCMs from: {MAT_PATH}")
-    if not os.path.exists(MAT_PATH):
-        raise FileNotFoundError(f"Reference CCM file not found: {MAT_PATH}")
-
     mat = loadmat(MAT_PATH)
     entries = mat['wps_ccms'].reshape(-1)
 
@@ -102,8 +91,6 @@ def choose_nikon_ccm_3d(wp_rgb, illuminant_wps, ccms, names):
 def load_cluster_centers():
     """Load cluster centers dict from npy file."""
     path = os.path.join(PROJECT_ROOT, "cluster_centers.npy")
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Cluster centers file not found: {path}")
     centers = np.load(path, allow_pickle=True).item()
     return centers
 
@@ -115,9 +102,6 @@ def get_ccms_for_clusters(illum_wps3, illum_ccms, illum_names):
     print("\nMapping Clusters to Nikon CCMs:")
     # We map based on the Training Labels to ensure we cover all model outputs
     for name in TRAIN_LABELS:
-        if name not in centers:
-            print(f"  Warning: Cluster {name} not found in centers file. Skipping.")
-            continue
         wp = centers[name]
         # ensure normalized chromaticity
         wp_norm = wp / (wp.sum() + 1e-12)
@@ -199,6 +183,21 @@ def cams_to_softmax_weights(cam_dict, eps=1e-8, temp=1.0):
     weights = {names[i]: soft[..., i].astype(np.float32) for i in range(len(names))}
     return weights, soft  # soft is HxWxC
 
+def lin_to_srgb(linear_rgb):
+    """
+    Convert linear RGB to sRGB using standard gamma correction.
+    linear_rgb: array in range [0, 1]
+    returns: sRGB array in range [0, 1]
+    """
+    linear_rgb = np.clip(linear_rgb, 0.0, 1.0)
+    mask = linear_rgb <= 0.0031308
+    srgb = np.where(
+        mask,
+        12.92 * linear_rgb,
+        1.055 * np.power(linear_rgb, 1.0 / 2.4) - 0.055
+    )
+    return np.clip(srgb, 0.0, 1.0)
+
 def view_as_linear(x):
     """
     Pass-through for linear RGB (just clip).
@@ -235,36 +234,21 @@ def main():
 
     # 3) Load raw linear image for correction
     print(f"Loading image: {args.image}")
-    if not os.path.exists(args.image):
-        print(f"Error: Image not found: {args.image}")
-        return
-
-    try:
-        # process_raw_image returns numpy array, usually uint8 or uint16 depending on implementation
-        # We want to preserve the original brightness (darkness) relative to full well/saturation.
-        raw_linear = process_raw_image(args.image, srgb=False)
-        
-        # Normalize based on bit depth, not content, to preserve dark/raw appearance
-        if raw_linear.dtype == np.uint8:
-            raw_linear = raw_linear.astype(np.float32) / 255.0
-        elif raw_linear.dtype == np.uint16:
-            raw_linear = raw_linear.astype(np.float32) / 65535.0
-        else:
-            # Float or unknown: if values are > 1, assume 8-bit or 16-bit based on range
-            raw_linear = raw_linear.astype(np.float32)
-            if raw_linear.max() > 255.0:
-                 raw_linear /= 65535.0
-            elif raw_linear.max() > 1.0:
-                 raw_linear /= 255.0
-        
-        raw_linear = np.clip(raw_linear, 0.0, 1.0)
-    except Exception as e:
-        print(f"Error processing raw image with process_raw_image: {e}")
-        # fallback: try PIL open and convert (NOT ideal for color accuracy)
-        pil = Image.open(args.image).convert('RGB')
-        raw_linear = np.asarray(pil).astype(np.float32) / 255.0
-        raw_linear = np.clip(raw_linear, 0.0, 1.0)
-        print("Fallback: used PIL-loaded RGB as linear approximation.")
+    # process_raw_image returns numpy array, usually uint8 or uint16 depending on implementation
+    # We want to preserve the original brightness (darkness) relative to full well/saturation.
+    raw_linear = process_raw_image(args.image, srgb=False)
+    
+    # Normalize to [0, 1] range for apply_correction
+    if raw_linear.dtype == np.uint8:
+        raw_linear = raw_linear.astype(np.float32) / 255.0
+    elif raw_linear.dtype == np.uint16:
+        raw_linear = raw_linear.astype(np.float32) / 65535.0
+    else:
+        raw_linear = raw_linear.astype(np.float32)
+        if raw_linear.max() > 1.0:
+            raw_linear = raw_linear / raw_linear.max()
+    
+    raw_linear = np.clip(raw_linear, 0.0, 1.0)
 
     # 4) Prepare model input (must match visualize_cam processing)
     from torchvision import transforms
@@ -274,28 +258,11 @@ def main():
         transforms.Normalize(MEAN, STD),
     ])
 
-    # Attempt to create the PIL view that model expects (reuse your rawpy logic)
-    try:
-        import rawpy
-        with rawpy.imread(args.image) as raw:
-             # Training data was dark/greenish
-            rgb_array = raw.postprocess(
-                half_size=True,
-                use_camera_wb=False,
-                user_wb=[1, 1, 1, 1],
-                no_auto_bright=True,
-                output_color=rawpy.ColorSpace.raw,
-                output_bps=8
-            )
-            # scale mean to approximate training brightness if necessary (as earlier)
-            current_mean = float(rgb_array.mean())
-            target_mean = 17.0
-            if current_mean > 0:
-                scale_factor = target_mean / (current_mean + 1e-12)
-                rgb_array = np.clip(rgb_array.astype(np.float32) * scale_factor, 0, 255).astype(np.uint8)
-            pil_img = Image.fromarray(rgb_array)
-    except Exception as e:
-        print(f"rawpy fallback: {e}. Opening via PIL instead.")
+    # Load image for model input (consistent with visualize_cam.py)
+    if args.image.lower().endswith('.nef'):
+        rgb_array = process_raw_image(args.image, srgb=False)
+        pil_img = Image.fromarray(rgb_array)
+    else:
         pil_img = Image.open(args.image).convert('RGB')
 
     img_tensor = transform(pil_img).unsqueeze(0).to(DEVICE)
@@ -304,29 +271,19 @@ def main():
     print("Generating CAMs...")
     available_layers = get_available_layers(model, args.model)
     layer_dict = {name: layer for name, layer in available_layers}
-    if args.layer not in layer_dict:
-        print(f"Layer {args.layer} not found. Available: {list(layer_dict.keys())}")
-        return
     target_layer = layer_dict[args.layer]
 
     model_wrapper = ModelWrapper(model, args.model)
     cam = create_cam_instance(args.cam, model_wrapper, [target_layer], model, args.model)
 
-    # Get logits/probs and predicted class (safe mapping)
+    # Get logits/probs and predicted class
     with torch.no_grad():
         outputs = model(img_tensor) if args.model != 'confidence' else model(img_tensor)[0]
         probs = F.softmax(outputs, dim=1)[0]
         pred_idx = int(outputs.argmax(dim=1)[0].item())
-        if pred_idx < len(TRAIN_LABELS):
-            pred_class = TRAIN_LABELS[pred_idx]
-        else:
-            pred_class = None
-            print("Warning: predicted index is out of TRAIN_LABELS range; base fallback will use Neutral if available.")
+        pred_class = TRAIN_LABELS[pred_idx]
 
-    if pred_class:
-        print(f"Predicted class by model: {pred_class} ({probs[pred_idx]:.2%})")
-    else:
-        print("Predicted class mapping failed; using fallback 'Neutral' if present.")
+    print(f"Predicted class by model: {pred_class} ({probs[pred_idx]:.2%})")
 
     # Generate CAM for each cluster name present in cluster_mapping and TRAIN_LABELS
     cams_raw = {}
@@ -361,47 +318,22 @@ def main():
         if m >= args.threshold:
             used_clusters.add(name)
 
-    if len(used_clusters) == 0:
-        print("No cluster exceeded the threshold. Lower the threshold or check CAMs.")
-    else:
-        print("Clusters used (max softmax weight >= threshold):", used_clusters)
+    print("Clusters used (max softmax weight >= threshold):", used_clusters)
 
-    # 8) Precompute corrected images per cluster (only for clusters present in mapping)
+    # 8) Precompute corrected images per cluster
     corrected_per_cluster = {}
     for name in TRAIN_LABELS:
-        if name not in cluster_mapping:
-            continue
         wp = cluster_mapping[name]['wp']
         ccm = cluster_mapping[name]['ccm']
         corrected_per_cluster[name] = apply_correction(raw_linear, wp, ccm)
 
-    # Compute base correction (predicted class fallback)
-    if pred_class and pred_class in corrected_per_cluster:
-        base_correction = corrected_per_cluster[pred_class]
-    else:
-        # choose a reasonable fallback - 'Neutral' if present else the first available
-        fallback = 'Neutral' if 'Neutral' in corrected_per_cluster else next(iter(corrected_per_cluster), None)
-        if fallback is None:
-            raise RuntimeError("No cluster CCMs available for fallback correction.")
-        print(f"Using fallback base correction: {fallback}")
-        base_correction = corrected_per_cluster[fallback]
+    # Compute base correction (predicted class)
+    base_correction = corrected_per_cluster[pred_class]
 
     # 9) Blend: weighted sum across clusters (weights sum to 1 per-pixel)
-    # If some clusters are missing corrected images, re-normalize weights to only include present clusters
-    available_names = [n for n in TRAIN_LABELS if n in corrected_per_cluster]
-    if set(available_names) != set(TRAIN_LABELS):
-        # zero out weights for missing ones and renormalize
-        mask_present = np.stack([1.0 if n in corrected_per_cluster else 0.0 for n in TRAIN_LABELS], axis=0)[None, None, :]
-        weights_stack = weights_stack * mask_present
-        denom = weights_stack.sum(axis=-1, keepdims=True) + 1e-12
-        weights_stack = weights_stack / denom
-        weights_dict = {TRAIN_LABELS[i]: weights_stack[..., i].astype(np.float32) for i in range(len(TRAIN_LABELS))}
-
     # Weighted composition
     accumulated = np.zeros_like(raw_linear, dtype=np.float32)
     for i, name in enumerate(TRAIN_LABELS):
-        if name not in corrected_per_cluster:
-            continue
         w = weights_stack[..., i]  # HxW
         w3 = w[..., None]  # HxWx1
         accumulated += corrected_per_cluster[name] * w3
