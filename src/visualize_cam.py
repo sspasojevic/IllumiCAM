@@ -184,27 +184,22 @@ def load_image_from_path(img_path):
                     # Convert to the exact format matching training data
                     # Training images are uint8 with very low values (dark green appearance)
                     # This is raw sensor data that hasn't been white-balanced or tone-mapped
-                    if rgb_array.dtype != np.uint8:
-                        # Convert to float for processing
+                    # We use the robust scaling logic from apply_ccm_with_cam.py
+                    if True: # simplify block structure
+                        # Always convert to float for precise scaling
                         rgb_array = rgb_array.astype(np.float32)
+                        
                         # Match the mean brightness of training images (~17 out of 255)
-                        # This preserves the exact raw sensor appearance (dark green, no WB)
                         current_mean = rgb_array.mean()
                         target_mean = 17.0  # Average mean of training images
+                        
                         if current_mean > 0:
                             # Scale so mean matches training data exactly
-                            scale_factor = target_mean / current_mean
+                            scale_factor = target_mean / (current_mean + 1e-12)
                             rgb_array = rgb_array * scale_factor
-                        # Clip to uint8 range (0-255), preserving raw sensor characteristics
+                        
+                        # Clip to uint8 range (0-255)
                         rgb_array = np.clip(rgb_array, 0, 255).astype(np.uint8)
-                    else:
-                        # If already uint8, scale to match mean
-                        current_mean = rgb_array.mean()
-                        target_mean = 17.0
-                        if current_mean > 0 and current_mean != target_mean:
-                            scale_factor = target_mean / current_mean
-                            rgb_array = (rgb_array.astype(np.float32) * scale_factor).astype(np.uint8)
-                            rgb_array = np.clip(rgb_array, 0, 255)
                     
                     # This is now the actual raw sensor data converted to RGB (from Bayer pattern)
                     # It preserves the raw sensor characteristics: dark green, no WB, linear RGB
@@ -449,11 +444,16 @@ def generate_heatmaps(model_type, cam_method, layer_name,
                         grayscale_cam = cam(input_tensor=img_tensor, targets=targets)[0]
                 heatmap = grayscale_cam
                 
-                # Weight by probability
-                prob = probs[class_idx].item()
-                weighted_heatmap = heatmap * prob
+                # Force min-max normalization to match apply_ccm_with_cam.py
+                # This ensures even weak activations are visualized with full dynamic range
+                mn, mx = heatmap.min(), heatmap.max()
+                if mx - mn > 1e-8:
+                    heatmap = (heatmap - mn) / (mx - mn)
                 
-                overlay = show_cam_on_image(rgb_image, weighted_heatmap, use_rgb=True)
+                # Add prob to title instead of dimming the heatmap
+                prob = probs[class_idx].item()
+                
+                overlay = show_cam_on_image(rgb_image, heatmap, use_rgb=True)
                 cams.append((overlay, label_names[class_idx], prob))
                 
             except Exception as e:
