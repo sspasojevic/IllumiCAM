@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
 """
-CAM-guided spatial color correction.
+Sara Spasojevic, Adnan Amir, Ritik Bompilwar
+CS7180 Final Project, Fall 2025
+December 9, 2025
 
-Takes a raw image (NEF) from Data/LSMI_Test_Package/images, runs a chosen CAM
-method on a chosen model, and wherever the CAM shows activation above a
-threshold we apply the corresponding cluster's CCM (and WB) to the linear raw
-image. CAMs are normalized and converted to per-pixel softmax weights so
-multiple cluster activations compete rather than accumulate.
+CAM-Guided Spatial Color Correction Tool
 
-Outputs:
- - {image_name}_corrected.png : visualization with original / corrected / CAMs
- - prints which cluster CCMs were actually used
+Performs spatially-aware white balance correction guided by Class Activation Maps.
+Processes RAW NEF images using model predictions to identify illuminant regions,
+then applies appropriate Color Correction Matrices (CCMs) and white balance to
+each region. Uses softmax-weighted blending when multiple illuminants are detected.
+
+Outputs visualization showing original, corrected, and CAM heatmaps.
+
+Uses:
+    - config.config for paths and model settings
+    - src.utils for model loading, CAM generation, and RAW processing
+    - Nikon D810 reference CCMs from LSMI dataset
 """
 
 import os
@@ -24,29 +30,21 @@ import cv2
 from PIL import Image
 from scipy.io import loadmat
 
-# Add project root to path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, PROJECT_ROOT)
 
-# Import from existing modules
-from src.display_scripts.visualize_cam import (
-    MODELS, MODEL_PATHS, CAM_METHODS,
-    ModelWrapper, get_available_layers, create_cam_instance,
-    MEAN, STD, DEVICE, IMG_SIZE
-)
-from src.data_loader import get_datasets # Import to get correct label order
+from config.config import MEAN, STD, DEVICE, IMG_SIZE, NIKON_CCM_MAT, VISUALIZATIONS_DIR, MODEL_PATHS
+from src.utils import load_model, create_cam, process_raw_image
+from src.data_loader import get_datasets
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 
-from src.lsmi_utils import process_raw_image
+MODEL_CHOICES = list(MODEL_PATHS.keys())
+CAM_CHOICES = ['gradcam', 'gradcam++', 'scorecam']
 
-# We need the model's training label order
 _, _, _, TRAIN_LABELS = get_datasets()
 print(f"Training Label Order (Model Output): {TRAIN_LABELS}")
-# Expected: ['Cool', 'Neutral', 'Very_Cool', 'Very_Warm', 'Warm'] (Alphabetical)
 
-MAT_PATH = os.path.join(PROJECT_ROOT, "Data", "info", "Info", "reference_wps_ccms_nikond810.mat")
-
-# ---------- Nikon CCM helpers (same idea as your original) ----------
+MAT_PATH = NIKON_CCM_MAT
 def load_nikon_ccms_fixed():
     """Load Nikon reference WPs/CCMs with robust parsing."""
     print(f"Loading Nikon reference WPs/CCMs from: {MAT_PATH}")
@@ -62,13 +60,11 @@ def load_nikon_ccms_fixed():
         wp2 = np.array(e['wp'][0], dtype=np.float32).reshape(-1)
 
         if wp2.shape[0] == 2:
-            # Interpret as [R/G, B/G] -> [R, G, B] normalized
             r_g, b_g = wp2
             wp3 = np.array([r_g, 1.0, b_g], dtype=np.float32)
             wp3 = wp3 / wp3.sum()
         else:
             wp3 = np.array(e['wp'][0], dtype=np.float32).reshape(-1)
-            # ensure normalized chromaticity
             wp3 = wp3 / (wp3.sum() + 1e-12)
 
         ccm = np.array(e['ccm'][0], dtype=np.float32).reshape(3, 3)
@@ -100,10 +96,8 @@ def get_ccms_for_clusters(illum_wps3, illum_ccms, illum_names):
     cluster_ccms = {}
 
     print("\nMapping Clusters to Nikon CCMs:")
-    # We map based on the Training Labels to ensure we cover all model outputs
     for name in TRAIN_LABELS:
         wp = centers[name]
-        # ensure normalized chromaticity
         wp_norm = wp / (wp.sum() + 1e-12)
         ccm, ref_name, dist = choose_nikon_ccm_3d(wp_norm, illum_wps3, illum_ccms, illum_names)
         cluster_ccms[name] = {
@@ -119,14 +113,9 @@ def get_ccms_for_clusters(illum_wps3, illum_ccms, illum_names):
 def apply_correction(raw_img, wp, ccm):
     """
     Apply WB and CCM to linear raw image.
-    raw_img: HxWx3 linear representation in range ~0..1
-    wp: 3-vector chromaticity (not necessarily normalized to sum 1, but G ~ 1 assumption not needed here)
-    ccm: 3x3 matrix
-    returns HxWx3 linear corrected image in range 0..1 (scaled)
     """
     raw = raw_img.astype(np.float32)
-    # If raw was integer scaled, assume already normalized before call.
-    # Normalize wp so that green ~ 1 (match your earlier approach)
+
     if wp[1] == 0:
         wp_norm = wp / (wp.sum() + 1e-12)
     else:
@@ -142,37 +131,28 @@ def apply_correction(raw_img, wp, ccm):
     rendered = rendered.reshape(h, w, 3)
     rendered = np.clip(rendered, 0.0, None)
 
-    # Normalize scale to [0,1] by percentile to avoid single bright pixel domination
+    # Scale to [0,1] using percentile
     pmax = np.percentile(rendered, 99.5)
     if pmax > 0:
         rendered = rendered / (pmax + 1e-12)
         rendered = np.clip(rendered, 0.0, 1.0)
 
     return rendered
-
-# ---------- CAM normalization / weighting utilities ----------
 def normalize_cam_to_0_1(cam):
-    """Scale cam to [0,1] by min/max. If constant, returns zeros."""
+    """Scale CAM to [0,1] by min/max."""
     mn, mx = float(cam.min()), float(cam.max())
     if mx - mn < 1e-8:
         return np.zeros_like(cam, dtype=np.float32)
     return ((cam - mn) / (mx - mn)).astype(np.float32)
 
 def smooth_mask(mask, ksize=41, sigma=0):
-    """Smooth mask using Gaussian blur (ksize should be odd)."""
+    """Smooth mask with Gaussian blur."""
     if ksize % 2 == 0:
         ksize += 1
     return cv2.GaussianBlur(mask, (ksize, ksize), sigma)
 
 def cams_to_softmax_weights(cam_dict, eps=1e-8, temp=1.0):
-    """
-    cam_dict: {name: cam_hxw (float32, assumed normalized 0..1)}
-    Returns:
-      weights: dict {name: weight_hxw}
-      stack_weights: hxw x num_classes (numpy array)
-    Approach: exponentiate scaled cams and normalize per-pixel (softmax).
-    temp <1 sharpens, >1 smooths.
-    """
+    """Convert CAM dict to per-pixel softmax weights."""
     names = list(cam_dict.keys())
     cams = np.stack([cam_dict[n] for n in names], axis=-1)  # H x W x C
     # optional temperature and exponentiation (keep values non-negative)
@@ -209,8 +189,8 @@ def view_as_linear(x):
 def main():
     parser = argparse.ArgumentParser(description='Apply CAM-guided Color Correction (improved)')
     parser.add_argument('--image', type=str, required=True, help='Path to input image (NEF or TIFF)')
-    parser.add_argument('--model', type=str, default='standard', choices=list(MODELS.keys()), help='Model type')
-    parser.add_argument('--cam', type=str, default='gradcam', choices=list(CAM_METHODS.keys()), help='CAM method')
+    parser.add_argument('--model', type=str, default='standard', choices=MODEL_CHOICES, help='Model type')
+    parser.add_argument('--cam', type=str, default='gradcam', choices=CAM_CHOICES, help='CAM method')
     parser.add_argument('--layer', type=str, default='conv5', help='Target layer name')
     parser.add_argument('--output', type=str, default=os.path.join(PROJECT_ROOT, 'visualizations', 'cam_correction'), help='Output directory')
     parser.add_argument('--threshold', type=float, default=0.10, help='Per-pixel threshold on softmax weight to consider a cluster "used" (default: 0.10)')
@@ -226,15 +206,11 @@ def main():
 
     # 2) Load model
     print(f"Loading model: {args.model}")
-    model_path = MODEL_PATHS[args.model]
-    model_class = MODELS[args.model]
-    model = model_class().to(DEVICE)
-    model.load_state_dict(torch.load(model_path, map_location=DEVICE))
-    model.eval()
+    model = load_model(args.model)
 
     # 3) Load raw linear image for correction
     print(f"Loading image: {args.image}")
-    # process_raw_image returns numpy array, usually uint8 or uint16 depending on implementation
+
     # We want to preserve the original brightness (darkness) relative to full well/saturation.
     raw_linear = process_raw_image(args.image, srgb=False)
     
@@ -269,12 +245,7 @@ def main():
 
     # 5) Get CAMs
     print("Generating CAMs...")
-    available_layers = get_available_layers(model, args.model)
-    layer_dict = {name: layer for name, layer in available_layers}
-    target_layer = layer_dict[args.layer]
-
-    model_wrapper = ModelWrapper(model, args.model)
-    cam = create_cam_instance(args.cam, model_wrapper, [target_layer], model, args.model)
+    cam = create_cam(model, args.model, args.cam)
 
     # Get logits/probs and predicted class
     with torch.no_grad():
@@ -309,7 +280,7 @@ def main():
     weights_dict, weights_stack = cams_to_softmax_weights(cams_norm, temp=args.temp)
     # weights_stack shape: H x W x C
 
-    # Determine which clusters are "used" by thresholding their softmax weight at each pixel
+    # Determine which clusters are used by thresholding their softmax weight at each pixel
     used_clusters = set()
     H, W = raw_linear.shape[:2]
     # compute a per-cluster max weight to decide which clusters to render in bottom row

@@ -1,6 +1,21 @@
 """
-Evaluation script for illuminant estimation model.
+Sara Spasojevic, Adnan Amir, Ritik Bompilwar
+CS7180 Final Project, Fall 2025
+December 9, 2025
+
+Model Evaluation Script
+
+Evaluates trained illuminant estimation models on the test dataset.
+Computes classification metrics (accuracy, precision, recall, F1) and
+generates confusion matrices for all supported model architectures.
+
 Supports: standard, confidence, paper, illumicam3
+
+Uses:
+    - config.config for paths and device
+    - src.utils for model loading
+    - src.data_loader for test data
+    - sklearn for classification metrics
 """
 
 import os
@@ -13,48 +28,17 @@ import seaborn as sns
 from tqdm import tqdm
 from sklearn.metrics import classification_report, confusion_matrix
 
-# Add project root to path for imports
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
-# Hardcoded configuration
-if torch.cuda.is_available():
-    DEVICE = torch.device("cuda")
-elif torch.backends.mps.is_available():
-    DEVICE = torch.device("mps")
-else:
-    DEVICE = torch.device("cpu")
-
-SAVED_MODELS_DIR = os.path.join(PROJECT_ROOT, "saved_models")
-VISUALIZATIONS_DIR = os.path.join(PROJECT_ROOT, "visualizations")
-NUM_CLASSES = 5
-
-from src.models.model import IlluminantCNN
-from src.models.model_confidence import ConfidenceWeightedCNN
-from src.models.model_paper import ColorConstancyCNN
-from src.models.model_illumicam3 import IllumiCam3
+from config.config import DEVICE, VISUALIZATIONS_DIR, MODEL_PATHS
+from src.utils import load_model
 from src.data_loader import get_datasets, get_dataloaders
-
-# Model registry
-MODELS = {
-    'standard': IlluminantCNN,
-    'confidence': ConfidenceWeightedCNN,
-    'paper': lambda: ColorConstancyCNN(K=NUM_CLASSES, pretrained=False),
-    'illumicam3': IllumiCam3
-}
-
-# Model save paths
-MODEL_PATHS = {
-    'standard': os.path.join(SAVED_MODELS_DIR, 'best_illuminant_cnn_val_8084.pth'),
-    'confidence': os.path.join(SAVED_MODELS_DIR, 'best_illuminant_cnn_confidence.pth'),
-    'paper': os.path.join(SAVED_MODELS_DIR, 'best_paper_model.pth'),
-    'illumicam3': os.path.join(SAVED_MODELS_DIR, 'best_illumicam3.pth')
-}
 
 
 def evaluate_test_set(model_type='standard', batch_size=256):
     """
-    Evaluate the model on the test set.
+    Evaluate model on test dataset and compute metrics.
     
     Args:
         model_type: Type of model ('standard', 'confidence', 'paper', 'illumicam3')
@@ -86,15 +70,7 @@ def evaluate_test_set(model_type='standard', batch_size=256):
     
     # Load model
     print(f"Loading {model_type} model from {model_path}...")
-    model_class = MODELS[model_type]
-    model = model_class().to(DEVICE)
-    
-    if not os.path.exists(model_path):
-        raise FileNotFoundError(f"Model file not found: {model_path}")
-    
-    model.load_state_dict(torch.load(model_path, map_location=DEVICE))
-    model.eval()
-    print(f"Loaded model from: {model_path}")
+    model = load_model(model_type, weights_path=model_path, eval_mode=True, device=DEVICE)
     
     # Evaluate
     all_preds = []

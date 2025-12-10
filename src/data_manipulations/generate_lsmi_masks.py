@@ -1,4 +1,24 @@
+"""
+Sara Spasojevic, Adnan Amir, Ritik Bompilwar
+CS7180 Final Project, Fall 2025
+December 9, 2025
+
+LSMI Ground Truth Mask Generation Script
+
+Generates pixel-level ground truth masks for LSMI (Localized Spatially Mixed Illuminant)
+test images. Processes RAW NEF files with ColorChecker charts, extracts illuminant
+information from chart cells, and creates multi-channel masks indicating which pixels
+are illuminated by which cluster. Each mask has 5 channels corresponding to illuminant
+clusters: Very_Warm, Warm, Neutral, Cool, Very_Cool.
+
+Uses:
+    - config.config for data paths and cluster centers
+    - rawpy for RAW image processing
+    - OpenCV for perspective transforms and mask generation
+"""
+
 import os
+import sys
 import json
 import numpy as np
 import rawpy
@@ -7,8 +27,10 @@ import argparse
 from tqdm import tqdm
 import math
 
-# Get project root (three levels up from src/data_manipulations/)
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, PROJECT_ROOT)
+
+from config.config import DATA_ROOT, CLUSTER_CENTERS_PATH
 
 # Constants from 1_make_mixture_map.py
 CELLCHART = np.float32([
@@ -106,18 +128,6 @@ def get_patch_chroma(img, mcc_coord):
     if h_matrix is None:
         print(f"Error: h_matrix is None for mcc_coord: {mcc_coord}")
         return np.array([0,0,0])
-    
-    # Transform patch centers
-    # CELLCHART has 4 points per patch (corners). We want the center of each patch?
-    # Actually, the script uses the corners to define the patch area.
-    # But for simplicity, let's just sample the center of the gray patches.
-    # Gray patches are usually the bottom row (Row 4 in CELLCHART?).
-    # Wait, CELLCHART has 24 patches.
-    # Standard Macbeth chart: bottom row is gray scale.
-    # Patches 19-24 (0-indexed).
-    # In CELLCHART array:
-    # Row 4 indices: 18, 19, 20, 21, 22, 23.
-    # These are the gray patches.
     
     gray_patches_indices = [18, 19, 20, 21, 22, 23]
     
@@ -280,9 +290,9 @@ def process_place(place_path, place_name, meta, cluster_centers, output_dir):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--lsmi_root", type=str, default=os.path.join(PROJECT_ROOT, "Data", "LSMI", "nikon"))
-    parser.add_argument("--output_dir", type=str, default=os.path.join(PROJECT_ROOT, "Data", "LSMI", "masks"))
-    parser.add_argument("--centroids_file", type=str, default=os.path.join(PROJECT_ROOT, "cluster_centers.npy"))
+    parser.add_argument("--lsmi_root", type=str, default=os.path.join(DATA_ROOT, "LSMI", "nikon"))
+    parser.add_argument("--output_dir", type=str, default=os.path.join(DATA_ROOT, "LSMI", "masks"))
+    parser.add_argument("--centroids_file", type=str, default=CLUSTER_CENTERS_PATH)
     args = parser.parse_args()
     
     os.makedirs(args.output_dir, exist_ok=True)

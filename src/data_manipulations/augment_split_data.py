@@ -1,4 +1,23 @@
+"""
+Sara Spasojevic, Adnan Amir, Ritik Bompilwar
+CS7180 Final Project, Fall 2025
+December 9, 2025
+
+Dataset Augmentation and Splitting Script
+
+Processes raw illuminant data, performs K-means clustering to group images by
+illuminant color, balances class distributions through augmentation, and creates
+train/val/test splits. Generates the final dataset structure used for training
+illuminant estimation models.
+
+Uses:
+    - config.config for data paths
+    - sklearn for K-means clustering
+    - PIL for image augmentation
+"""
+
 import os
+import sys
 import glob
 import shutil
 import random
@@ -9,16 +28,17 @@ from sklearn.cluster import KMeans
 from tqdm import tqdm
 import warnings
 
-# Configuration
-# Get project root (three levels up from src/data_manipulations/)
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-RANDOM_SEED = 42
-SPLIT_SEED = 1337  # Seed for dataset splitting (matches notebook)
-DATA_ROOT = os.path.join(PROJECT_ROOT, "Data", "Nikon_D810")
-FINAL_DATASET_DIR = os.path.join(PROJECT_ROOT, "dataset")  # Final output directory with train/val/test structure
-TARGET_SIZE_STRATEGY = "max" # 'max' (match largest cluster) or integer value
+sys.path.insert(0, PROJECT_ROOT)
 
-# Set seeds
+from config.config import DATA_ROOT as CONFIG_DATA_ROOT, DATASET_ROOT
+
+RANDOM_SEED = 42
+SPLIT_SEED = 1337
+DATA_ROOT = os.path.join(CONFIG_DATA_ROOT, "Nikon_D810")
+FINAL_DATASET_DIR = DATASET_ROOT
+TARGET_SIZE_STRATEGY = "max"
+
 np.random.seed(RANDOM_SEED)
 random.seed(RANDOM_SEED)
 warnings.filterwarnings("ignore")

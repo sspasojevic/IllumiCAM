@@ -22,19 +22,7 @@ class ColorConstancyCNN(nn.Module):
         # Feature extractor (Conv1 - Conv5 + MaxPool)
         self.features = self.alexnet.features
         
-        # The classifier in AlexNet is:
-        # (0): Dropout(p=0.5, inplace=False)
-        # (1): Linear(in_features=9216, out_features=4096, bias=True)
-        # (2): ReLU(inplace=True)
-        # (3): Dropout(p=0.5, inplace=False)
-        # (4): Linear(in_features=4096, out_features=4096, bias=True)
-        # (5): ReLU(inplace=True)
-        # (6): Linear(in_features=4096, out_features=1000, bias=True)
-        
-        # We replace the classifier to match the paper's specific FC structure (if different)
-        # or just modify the last layer. The paper specifies:
-        # FC6 (4096) -> FC7 (4096) -> FC8 (K)
-        # This matches AlexNet exactly, except for the last layer.
+        # We replace the classifier to match the paper's specific FC structure
         
         self.classifier = nn.Sequential(
             nn.Dropout(p=0.5),
@@ -56,17 +44,6 @@ class ColorConstancyCNN(nn.Module):
         return x
         
     def _initialize_classifier(self):
-        # Initialize only the new classifier layers
-        # Copy weights from pre-trained AlexNet classifier layers 1 and 4 if possible,
-        # otherwise initialize randomly.
-        
-        # 1. Copy FC6 and FC7 weights from pretrained model to speed up convergence
-        # self.classifier[1].weight.data = self.alexnet.classifier[1].weight.data
-        # self.classifier[1].bias.data = self.alexnet.classifier[1].bias.data
-        # self.classifier[4].weight.data = self.alexnet.classifier[4].weight.data
-        # self.classifier[4].bias.data = self.alexnet.classifier[4].bias.data
-        
-        # For the final layer (K classes), initialize with Normal dist
         nn.init.normal_(self.classifier[6].weight, 0, 0.01)
         nn.init.constant_(self.classifier[6].bias, 0)
 

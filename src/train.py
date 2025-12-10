@@ -1,4 +1,8 @@
 """
+Sara Spasojevic, Adnan Amir, Ritik Bompilwar
+CS7180 Final Project, Fall 2025
+December 9, 2025
+
 Unified Training Script for all model types.
 Supports: standard, confidence, paper, illumicam3
 """
@@ -16,55 +20,31 @@ from tqdm import tqdm
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
-# Hardcoded configuration
-if torch.cuda.is_available():
-    DEVICE = torch.device("cuda")
-elif torch.backends.mps.is_available():
-    DEVICE = torch.device("mps")
-else:
-    DEVICE = torch.device("cpu")
-
-NUM_EPOCHS = 20
-LEARNING_RATE = 0.0001
-SCHEDULER_FACTOR = 0.2
-SCHEDULER_PATIENCE = 4
-SCHEDULER_MIN_LR = 5e-12
-VISUALIZATIONS_DIR = os.path.join(PROJECT_ROOT, "visualizations")
-NUM_CLASSES = 5
-BATCH_SIZE = 64
-SAVED_MODELS_DIR = os.path.join(PROJECT_ROOT, "saved_models")
-from src.models.model import IlluminantCNN, count_parameters
-from src.models.model_confidence import ConfidenceWeightedCNN
-from src.models.model_paper import ColorConstancyCNN
-from src.models.model_illumicam3 import IllumiCam3
+# Import configuration
+from config.config import (
+    DEVICE, NUM_EPOCHS, LEARNING_RATE, SCHEDULER_FACTOR, SCHEDULER_PATIENCE,
+    SCHEDULER_MIN_LR, VISUALIZATIONS_DIR, NUM_CLASSES, BATCH_SIZE,
+    MODELS, MODEL_PATHS, SAVED_MODELS_DIR, PAPER_BATCH_SIZE, PAPER_MOMENTUM,
+    PAPER_WEIGHT_DECAY, PAPER_LEARNING_RATE
+)
+from src.models.model import count_parameters
 from src.data_loader import get_datasets, get_dataloaders
 
 
-# Model registry
-MODELS = {
-    'standard': IlluminantCNN,
-    'confidence': ConfidenceWeightedCNN,
-    'paper': lambda: ColorConstancyCNN(K=NUM_CLASSES, pretrained=True),
-    'illumicam3': IllumiCam3
-}
-
-# Model save paths (all in saved_models folder)
-MODEL_PATHS = {
-    'standard': os.path.join(SAVED_MODELS_DIR, 'best_illuminant_cnn.pth'),
-    'confidence': os.path.join(SAVED_MODELS_DIR, 'best_illuminant_cnn_confidence.pth'),
-    'paper': os.path.join(SAVED_MODELS_DIR, 'best_paper_model.pth'),
-    'illumicam3': os.path.join(SAVED_MODELS_DIR, 'best_illumicam3.pth')
-}
-
-# Hyperparameters for the model in the paper
-PAPER_BATCH_SIZE = 100
-PAPER_MOMENTUM = 0.9
-PAPER_WEIGHT_DECAY = 0.0005
-PAPER_LEARNING_RATE = 0.001
-
-
 def train_one_epoch_standard(model, loader, criterion, optimizer, device):
-    """Standard training (for standard and paper models)."""
+    """
+    Train for one epoch using standard cross-entropy loss.
+    
+    Args:
+        model: PyTorch model
+        loader: Training data loader
+        criterion: Loss function
+        optimizer: Optimizer
+        device: Compute device
+        
+    Returns:
+        Tuple of (average_loss, accuracy)
+    """
     model.train()
     running_loss = 0.0
     correct = 0
@@ -91,7 +71,19 @@ def train_one_epoch_standard(model, loader, criterion, optimizer, device):
 
 
 def train_one_epoch_confidence(model, loader, criterion, optimizer, device):
-    """Training with entropy regularization (confidence model)."""
+    """
+    Train confidence model for one epoch with entropy regularization.
+    
+    Args:
+        model: Confidence-weighted model
+        loader: Training data loader
+        criterion: Classification loss function
+        optimizer: Optimizer
+        device: Compute device
+        
+    Returns:
+        Tuple of (average_loss, accuracy)
+    """
     model.train()
     running_loss = 0.0
     correct = 0
@@ -127,7 +119,18 @@ def train_one_epoch_confidence(model, loader, criterion, optimizer, device):
 
 
 def validate_standard(model, loader, criterion, device):
-    """Standard validation."""
+    """
+    Validate model for one epoch.
+    
+    Args:
+        model: PyTorch model
+        loader: Validation data loader
+        criterion: Loss function
+        device: Compute device
+        
+    Returns:
+        Tuple of (average_loss, accuracy)
+    """
     model.eval()
     running_loss = 0.0
     correct = 0
@@ -148,7 +151,18 @@ def validate_standard(model, loader, criterion, device):
 
 
 def validate_confidence(model, loader, criterion, device):
-    """Validation for confidence model."""
+    """
+    Validate confidence model for one epoch.
+    
+    Args:
+        model: Confidence-weighted model
+        loader: Validation data loader
+        criterion: Loss function
+        device: Compute device
+        
+    Returns:
+        Tuple of (average_loss, accuracy)
+    """
     model.eval()
     running_loss = 0.0
     correct = 0
@@ -169,7 +183,14 @@ def validate_confidence(model, loader, criterion, device):
 
 
 def plot_training_curves(history, save_path, model_type):
-    """Plot and save training curves."""
+    """
+    Plot and save training/validation loss and accuracy curves.
+    
+    Args:
+        history: Dictionary with 'train_loss', 'val_loss', 'train_acc', 'val_acc' lists
+        save_path: Path to save the plot
+        model_type: Model type name for title
+    """
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
     
     ax1.plot(history["train_loss"], label="Train")

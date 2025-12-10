@@ -1,6 +1,18 @@
 """
-Visualize ground truth masks for LSMI_Test_Package images.
-Takes an LSMI NEF image path and displays the ground truth illuminant masks.
+Sara Spasojevic, Adnan Amir, Ritik Bompilwar
+CS7180 Final Project, Fall 2025
+December 9, 2025
+
+Ground Truth Mask Visualization Tool
+
+Visualizes ground truth illuminant masks for LSMI test images. Processes RAW
+NEF files and displays corresponding pixel-level annotations for each illuminant
+cluster. Useful for verifying mask quality and understanding spatial distribution
+of illuminants in test scenes.
+
+Uses:
+    - config.config for paths and image settings
+    - src.utils for RAW image processing and mask loading
 """
 
 import os
@@ -10,22 +22,21 @@ import numpy as np
 import matplotlib.pyplot as plt
 import cv2
 
-# Add project root to path for imports
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, PROJECT_ROOT)
 
-from src.lsmi_utils import process_raw_image, load_mask, CLUSTER_NAMES
+from config.config import IMG_SIZE, VISUALIZATIONS_DIR, LSMI_MASKS_DIR
+from src.utils import process_raw_image, load_mask, CLUSTER_NAMES
 from src.data_loader import get_datasets
-
-IMG_SIZE = 224
-VISUALIZATIONS_DIR = os.path.join(PROJECT_ROOT, "visualizations")
 
 
 def visualize_gt_masks(image_path):
-    """Visualize ground truth masks for an LSMI image."""
-    # Check if this is from LSMI_Test_Package
-    lsmi_masks_dir = os.path.join(PROJECT_ROOT, "Data", "LSMI_Test_Package", "masks")
+    """
+    Visualize ground truth masks for an LSMI image.
     
+    Args:
+        image_path: Path to NEF image file
+    """
     # Load the image
     print(f"Loading image: {image_path}")
     rgb_array = process_raw_image(image_path, srgb=False)
@@ -35,7 +46,7 @@ def visualize_gt_masks(image_path):
     
     # Load ground truth mask
     img_basename = os.path.splitext(os.path.basename(image_path))[0]
-    mask_path = os.path.join(lsmi_masks_dir, f"{img_basename}_mask.npy")
+    mask_path = os.path.join(LSMI_MASKS_DIR, f"{img_basename}_mask.npy")
     
     print(f"Loading ground truth mask: {mask_path}")
     gt_masks = load_mask(mask_path, target_shape=(IMG_SIZE, IMG_SIZE))

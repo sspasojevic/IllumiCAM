@@ -1,6 +1,21 @@
 """
-Unified CAM Visualization Tool
-Supports: GradCAM, GradCAM++, ScoreCAM
+Sara Spasojevic, Adnan Amir, Ritik Bompilwar
+CS7180 Final Project, Fall 2025
+December 9, 2025
+
+CAM Visualization Tool
+
+Generates Class Activation Map (CAM) visualizations for illuminant estimation models.
+Supports multiple CAM methods (GradCAM, GradCAM++, ScoreCAM) and can process both
+dataset images and raw NEF files. Creates side-by-side visualizations showing
+original images and CAM heatmaps for each illuminant class.
+
+Supports: standard, confidence, paper, illumicam3 models
+
+Uses:
+    - config.config for paths and model settings
+    - src.utils for model loading and CAM creation
+    - pytorch_grad_cam for CAM generation
 """
 
 import os
@@ -14,80 +29,17 @@ from tqdm import tqdm
 from PIL import Image
 from torchvision import transforms
 
-# Add project root to path for imports
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, PROJECT_ROOT)
 
-# Import all CAM methods
-from pytorch_grad_cam import (
-    GradCAM, GradCAMPlusPlus, ScoreCAM
-)
+from config.config import DEVICE, MEAN, STD, NUM_CLASSES, VISUALIZATIONS_DIR, IMG_SIZE, MODEL_PATHS
+from src.utils import load_model, create_cam, process_raw_image
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 from pytorch_grad_cam.utils.image import show_cam_on_image
-
-# Import project modules
-from src.models.model import IlluminantCNN
-from src.models.model_confidence import ConfidenceWeightedCNN
-from src.models.model_paper import ColorConstancyCNN
-from src.models.model_illumicam3 import IllumiCam3
 from src.data_loader import get_datasets, get_dataloaders
-from src.lsmi_utils import process_raw_image
 
-# Hardcoded configuration
-if torch.cuda.is_available():
-    DEVICE = torch.device("cuda")
-elif torch.backends.mps.is_available():
-    DEVICE = torch.device("mps")
-else:
-    DEVICE = torch.device("cpu")
-
-MEAN = [0.485, 0.456, 0.406]
-STD = [0.229, 0.224, 0.225]
-NUM_CLASSES = 5
-VISUALIZATIONS_DIR = os.path.join(PROJECT_ROOT, "visualizations")
-IMG_SIZE = 224
-SAVED_MODELS_DIR = os.path.join(PROJECT_ROOT, "saved_models")
-
-
-# Model registry
-MODELS = {
-    'standard': IlluminantCNN,
-    'confidence': ConfidenceWeightedCNN,
-    'paper': lambda: ColorConstancyCNN(K=NUM_CLASSES, pretrained=False),
-    'illumicam3': IllumiCam3
-}
-
-# Model paths
-MODEL_PATHS = {
-    'standard': os.path.join(SAVED_MODELS_DIR, "best_illuminant_cnn_val_8084.pth"),
-    'confidence': os.path.join(SAVED_MODELS_DIR, "best_illuminant_cnn_confidence.pth"),
-    'paper': os.path.join(SAVED_MODELS_DIR, "best_paper_model.pth"),
-    'illumicam3': os.path.join(SAVED_MODELS_DIR, "best_illumicam3.pth")
-}
-
-
-# CAM registry
-CAM_METHODS = {
-    'gradcam': GradCAM,
-    'gradcam++': GradCAMPlusPlus,
-    'scorecam': ScoreCAM
-}
-
-
-class ModelWrapper(torch.nn.Module):
-    """Wrapper to make models compatible with pytorch_grad_cam."""
-    def __init__(self, model, model_type):
-        super().__init__()
-        self.model = model
-        self.model_type = model_type
-    
-    def forward(self, x):
-        if self.model_type == 'confidence':
-            logits, _ = self.model(x)
-            return logits
-        else:
-            # standard and paper models return logits directly
-            return self.model(x)
+# CAM methods for CLI
+CAM_METHODS = ['gradcam', 'gradcam++', 'scorecam']
 
 
 def get_available_layers(model, model_type):
@@ -121,11 +73,11 @@ def get_available_layers(model, model_type):
     elif model_type == 'paper':
         # AlexNet features: conv layers at indices 0, 3, 6, 8, 10
         layers = [
-            ('conv1', model.features[0]),  # Conv2d(3, 64, ...)
-            ('conv2', model.features[3]),  # Conv2d(64, 192, ...)
-            ('conv3', model.features[6]),  # Conv2d(192, 384, ...)
-            ('conv4', model.features[8]),  # Conv2d(384, 256, ...)
-            ('conv5', model.features[10]), # Conv2d(256, 256, ...)
+            ('conv1', model.features[0]),
+            ('conv2', model.features[3]),
+            ('conv3', model.features[6]),
+            ('conv4', model.features[8]), 
+            ('conv5', model.features[10]),
         ]
     
     return layers
@@ -148,61 +100,26 @@ def load_image_from_path(img_path):
         transforms.Normalize(MEAN, STD),
     ])
     
-    # Handle NEF files using process_raw_image from lsmi_utils
     if img_path.lower().endswith('.nef'):
-        # Load raw sensor data with minimal processing (srgb=False for linear RGB)
         rgb_array = process_raw_image(img_path, srgb=False)
         img = Image.fromarray(rgb_array)
         img_tensor = transform(img).unsqueeze(0)
     else:
-        # Standard image formats
         img = Image.open(img_path).convert('RGB')
         img_tensor = transform(img).unsqueeze(0)
     
     return img_tensor, img
 
 
-def create_cam_instance(cam_method, model_wrapper, target_layers, model, model_type):
-    """Create CAM instance based on method name."""
-    cam_class = CAM_METHODS[cam_method.lower()]
-    if cam_class is None:
-        raise ValueError(f"Unknown CAM method: {cam_method}")
-    return cam_class(model=model_wrapper, target_layers=target_layers)
-
-
 def generate_heatmaps(model_type, cam_method, layer_name, image_path):
     """Main visualization function."""
-    # Get model path from hardcoded paths
-    model_path = MODEL_PATHS[model_type]
-    
     # Load model
-    print(f"\nLoading {model_type} model from {model_path}...")
-    model_class = MODELS[model_type]
-    model = model_class().to(DEVICE)
-    
-    if not os.path.exists(model_path):
-        print(f"Error: Model file {model_path} not found!")
-        return
-    
-    model.load_state_dict(torch.load(model_path, map_location=DEVICE))
-    model.eval()
-    
-    # Get available layers
-    available_layers = get_available_layers(model, model_type)
-    layer_dict = {name: layer for name, layer in available_layers}
-    
-    if layer_name not in layer_dict:
-        print(f"Error: Layer '{layer_name}' not found!")
-        print(f"Available layers: {list(layer_dict.keys())}")
-        return
-    
-    target_layer = layer_dict[layer_name]
-    print(f"Using layer: {layer_name}")
+    print(f"\nLoading {model_type} model...")
+    model = load_model(model_type)
     
     # Create CAM instance
     print(f"Initializing {cam_method.upper()}...")
-    model_wrapper = ModelWrapper(model, model_type)
-    cam = create_cam_instance(cam_method, model_wrapper, [target_layer], model, model_type)
+    cam = create_cam(model, model_type, cam_method)
     
     mean_np = np.array(MEAN, dtype=np.float32)
     std_np = np.array(STD, dtype=np.float32)
@@ -219,7 +136,6 @@ def generate_heatmaps(model_type, cam_method, layer_name, image_path):
         if model_type == 'confidence':
             outputs, _ = model(img_tensor)
         else:
-            # standard and paper models return logits directly
             outputs = model(img_tensor)
         probs = F.softmax(outputs, dim=1)[0]
         pred_label = outputs.argmax(dim=1)[0].item()
@@ -239,7 +155,6 @@ def generate_heatmaps(model_type, cam_method, layer_name, image_path):
             true_name = "Unknown"
         pred_name = label_names[pred_label]
         
-        # Get probabilities
         with torch.no_grad():
             if model_type == 'confidence':
                 outputs, _ = model(img_tensor)
@@ -248,7 +163,7 @@ def generate_heatmaps(model_type, cam_method, layer_name, image_path):
                 outputs = model(img_tensor)
             probs = F.softmax(outputs, dim=1)[0]
         
-        # Generate CAM for all classes
+        # Generate CAMs
         cams = []
         for class_idx in range(NUM_CLASSES):
             targets = [ClassifierOutputTarget(class_idx)]
@@ -261,13 +176,11 @@ def generate_heatmaps(model_type, cam_method, layer_name, image_path):
                     grayscale_cam = cam(input_tensor=img_tensor, targets=targets)[0]
             heatmap = grayscale_cam
             
-            # Force min-max normalization to match correct_with_cam.py
-            # This ensures even weak activations are visualized with full dynamic range
+            # Normalize to [0,1]
             mn, mx = heatmap.min(), heatmap.max()
             if mx - mn > 1e-8:
                 heatmap = (heatmap - mn) / (mx - mn)
             
-            # Add prob to title instead of dimming the heatmap
             prob = probs[class_idx].item()
             
             overlay = show_cam_on_image(rgb_image, heatmap, use_rgb=True)
@@ -280,9 +193,8 @@ def generate_heatmaps(model_type, cam_method, layer_name, image_path):
             "pred": pred_name
         })
     
-    # Create visualization grid
     rows = len(processed)
-    cols = 1 + NUM_CLASSES  # Original + CAM classes
+    cols = 1 + NUM_CLASSES
     
     print(f"\nVisualization layout: {rows} row(s) x {cols} column(s)")
     print(f"  - Column 0: Original image")
@@ -351,13 +263,7 @@ def interactive_mode():
     
     # Load model to get layers
     print(f"\nLoading model to inspect layers...")
-    model_class = MODELS[model_type]
-    model = model_class().to(DEVICE)
-    
-    if os.path.exists(model_path):
-        model.load_state_dict(torch.load(model_path, map_location=DEVICE))
-    else:
-        print(f"Warning: Model file not found. Showing available layers anyway.")
+    model = load_model(model_type)
     
     available_layers = get_available_layers(model, model_type)
     print("\nAvailable layers:")
@@ -368,10 +274,10 @@ def interactive_mode():
     
     # Select CAM method
     print("\nAvailable CAM methods:")
-    for i, name in enumerate(CAM_METHODS.keys(), 1):
+    for i, name in enumerate(CAM_METHODS, 1):
         print(f"  {i}. {name}")
     cam_choice = input("\nSelect CAM method (1-3): ").strip()
-    cam_method = list(CAM_METHODS.keys())[int(cam_choice) - 1]
+    cam_method = CAM_METHODS[int(cam_choice) - 1]
     
     # Get image path
     img_path = input("Image path: ").strip()
@@ -382,7 +288,7 @@ def main():
     parser = argparse.ArgumentParser(description='Unified CAM Visualization Tool')
     parser.add_argument('--model', type=str, choices=list(MODEL_PATHS.keys()), default='standard',
                        help='Model name: standard, confidence, paper, or illumicam3 (default: standard)')
-    parser.add_argument('--cam', type=str, choices=list(CAM_METHODS.keys()),
+    parser.add_argument('--cam', type=str, choices=CAM_METHODS,
                        help='CAM method to use')
     parser.add_argument('--layer', type=str, help='Layer name (e.g., conv5)')
     parser.add_argument('--image', type=str, required=True, help='Path to image')
