@@ -10,7 +10,7 @@
 
 ## Project Overview
 
-This project implements multiple CNN architectures for illuminant estimation and color constancy. We train models to classify scene illuminants into five categories (Very Warm, Warm, Neutral, Cool, Very Cool) and use Class Activation Maps (CAM) to visualize spatial attention. The project includes spatially-aware color correction using CAM-guided white balance, evaluation on LSMI (Localized Spatially Mixed Illuminant) test images, and comparison of different CAM methods (GradCAM, GradCAM++, ScoreCAM).
+This project implements multiple CNN architectures for illuminant estimation. We train models to classify scene illuminants into five categories (Very Warm, Warm, Neutral, Cool, Very Cool) and use Class Activation Maps (CAM) to visualize spatial attention. The project includes spatially-aware color correction using CAM-guided white balance, evaluation on LSMI (Localized Spatially Mixed Illuminant) test images, and comparison of different CAM methods (GradCAM, GradCAM++, ScoreCAM).
 
 ## Dependencies
 

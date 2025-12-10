@@ -33,8 +33,8 @@ from scipy.io import loadmat
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, PROJECT_ROOT)
 
-from config.config import MEAN, STD, DEVICE, IMG_SIZE, NIKON_CCM_MAT, VISUALIZATIONS_DIR, MODEL_PATHS
-from src.utils import load_model, create_cam, process_raw_image
+from config.config import MEAN, STD, DEVICE, IMG_SIZE, NIKON_CCM_MAT, VISUALIZATIONS_DIR, MODEL_PATHS, LSMI_MASKS_DIR
+from src.utils import load_model, create_cam, process_raw_image, load_mask, CLUSTER_NAMES
 from src.data_loader import get_datasets
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 
@@ -326,40 +326,81 @@ def main():
     final_image = accumulated.copy()
     final_image[zero_mask.squeeze(-1)] = base_correction[zero_mask.squeeze(-1)]
 
-    # 10) Convert to sRGB for visualization
+    # 10) Compute GT mask correction if available
+    gt_corrected_srgb = None
+    img_name = os.path.splitext(os.path.basename(args.image))[0]
+    mask_path = os.path.join(LSMI_MASKS_DIR, f"{img_name}_mask.npy")
+    
+    if os.path.exists(mask_path):
+        print("Loading GT mask for comparison...")
+        try:
+            gt_mask = load_mask(mask_path, target_shape=raw_linear.shape[:2])
+            
+            # Blend using GT mask weights
+            gt_accumulated = np.zeros_like(raw_linear, dtype=np.float32)
+            for name in TRAIN_LABELS:
+                cluster_idx = CLUSTER_NAMES.index(name)
+                weight = gt_mask[:, :, cluster_idx]
+                weight_3d = weight[..., None]
+                gt_accumulated += corrected_per_cluster[name] * weight_3d
+            
+            # Normalize by total weight
+            gt_total_weight = gt_mask.sum(axis=-1, keepdims=True)
+            gt_mask_valid = gt_total_weight > 1e-6
+            gt_final = np.where(gt_mask_valid, gt_accumulated / (gt_total_weight + 1e-12), base_correction)
+            gt_corrected_srgb = lin_to_srgb(gt_final)
+            print("GT mask correction computed")
+        except Exception as e:
+            print(f"Could not load GT mask: {e}")
+    
+    # 11) Convert to sRGB for visualization
     final_srgb = lin_to_srgb(final_image)
     base_srgb = lin_to_srgb(base_correction)
-    # Use view_as_linear for original to keep it dark/green (raw look)
     original_vis = view_as_linear(raw_linear)
 
-    # 11) Save visualization
+    # 12) Save visualization
     print("Saving visualization...")
     os.makedirs(args.output, exist_ok=True)
-    img_name = os.path.splitext(os.path.basename(args.image))[0]
 
-    # prepare figure: top row original / corrected / base-correction (for comparison)
+    # Prepare figure layout
     used_list = sorted(list(used_clusters))
     num_cam_plots = max(1, len(used_list))
-    cols = max(3, num_cam_plots + 2)  # ensure space for original and corrected
+    
+    # Add extra column for GT correction if available
+    top_row_imgs = 3  # original, cam corrected, base
+    if gt_corrected_srgb is not None:
+        top_row_imgs = 4  # add GT corrected
+    
+    cols = max(top_row_imgs, num_cam_plots + 2)
     rows = 2
     fig = plt.figure(figsize=(4*cols, 4*rows))
 
+    correction_type = "WB + CCM" if args.use_ccm else "WB Only"
+    
+    # Top row: Original
     ax = plt.subplot(rows, cols, 1)
     ax.imshow(original_vis)
     ax.set_title("Original (Raw Linear)")
     ax.axis('off')
 
-    correction_type = "WB + CCM" if args.use_ccm else "WB Only"
-    
+    # Top row: CAM Corrected
     ax = plt.subplot(rows, cols, 2)
     ax.imshow(final_srgb)
-    ax.set_title(f"Final Corrected ({correction_type})\nbase: {pred_class}")
+    ax.set_title(f"CAM Corrected\n{correction_type}")
     ax.axis('off')
 
+    # Top row: Base Correction
     ax = plt.subplot(rows, cols, 3)
     ax.imshow(base_srgb)
     ax.set_title(f"Base Correction ({correction_type})\n(pred/fallback)")
     ax.axis('off')
+    
+    # Top row: GT Corrected (if available)
+    if gt_corrected_srgb is not None:
+        ax = plt.subplot(rows, cols, 4)
+        ax.imshow(gt_corrected_srgb)
+        ax.set_title(f"GT Mask Corrected\n{correction_type}")
+        ax.axis('off')
 
     # Bottom row: show the used CAM heatmaps and their max weights
     for i, name in enumerate(used_list):
