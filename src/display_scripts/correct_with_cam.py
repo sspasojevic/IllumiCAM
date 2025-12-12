@@ -19,6 +19,7 @@ Uses:
     - Nikon D810 reference white points from LSMI dataset
 """
 
+# Imports
 import os
 import sys
 import argparse
@@ -30,24 +31,26 @@ import cv2
 from PIL import Image
 import json
 import textwrap
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend to avoid Qt display errors
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, PROJECT_ROOT)
 
 from config.config import MEAN, STD, DEVICE, IMG_SIZE, VISUALIZATIONS_DIR, MODEL_PATHS, LSMI_MASKS_DIR, LSMI_TEST_PACKAGE, LSMI_IMAGES_DIR
 from src.utils import load_model, create_cam, process_raw_image, load_mask, CLUSTER_NAMES
-from src.data_loader import get_datasets
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 
 MODEL_CHOICES = list(MODEL_PATHS.keys())
 CAM_CHOICES = ['gradcam', 'gradcam++', 'scorecam']
 
-_, _, _, TRAIN_LABELS = get_datasets()
+TRAIN_LABELS = CLUSTER_NAMES
 print(f"Training Label Order (Model Output): {TRAIN_LABELS}")
 
 
 def angular_error(x, y):
     """Calculate angular error between two RGB vectors."""
+
     x = np.array(x, dtype=np.float32)
     y = np.array(y, dtype=np.float32)
     x_norm = np.linalg.norm(x)
@@ -60,7 +63,8 @@ def angular_error(x, y):
     return np.degrees(np.arccos(dot))
 
 def map_illuminant_to_cluster(illuminant_rgb, cluster_centers_dict):
-    """Map an illuminant RGB to the closest cluster using angular error."""
+    """Map the GT illuminant RGB to the closest cluster using angular error."""
+
     illuminant_rgb = np.array(illuminant_rgb, dtype=np.float32)
     # Normalize to sum=1 (chromaticity)
     if illuminant_rgb.sum() > 1e-8:
@@ -82,6 +86,7 @@ def map_illuminant_to_cluster(illuminant_rgb, cluster_centers_dict):
 
 def load_cluster_centers():
     """Load cluster centers dict from npy file."""
+    
     path = os.path.join(PROJECT_ROOT, "cluster_centers.npy")
     centers = np.load(path, allow_pickle=True).item()
     return centers
@@ -130,8 +135,10 @@ def apply_correction(raw_img, wp):
         rendered = wb
 
     return rendered
+
 def normalize_cam_to_0_1(cam):
     """Scale CAM to [0,1] by min/max."""
+
     mn, mx = float(cam.min()), float(cam.max())
     if mx - mn < 1e-8:
         return np.zeros_like(cam, dtype=np.float32)
@@ -139,12 +146,14 @@ def normalize_cam_to_0_1(cam):
 
 def smooth_mask(mask, ksize=41, sigma=0):
     """Smooth mask with Gaussian blur."""
+
     if ksize % 2 == 0:
         ksize += 1
     return cv2.GaussianBlur(mask, (ksize, ksize), sigma)
 
 def cams_to_softmax_weights(cam_dict, eps=1e-8, temp=1.0):
     """Convert CAM dict to per-pixel softmax weights."""
+
     names = list(cam_dict.keys())
     cams = np.stack([cam_dict[n] for n in names], axis=-1)  # H x W x C
     # optional temperature and exponentiation (keep values non-negative)
@@ -161,6 +170,7 @@ def lin_to_srgb(linear_rgb):
     linear_rgb: array in range [0, 1]
     returns: sRGB array in range [0, 1]
     """
+
     linear_rgb = np.clip(linear_rgb, 0.0, 1.0)
     mask = linear_rgb <= 0.0031308
     srgb = np.where(
@@ -175,182 +185,176 @@ def view_as_linear(x):
     Pass-through for linear RGB (just clip).
     Preserves the 'dark and green' raw appearance by avoiding gamma correction.
     """
+
     return np.clip(x, 0.0, 1.0)
 
 # ---------- Processing Functions ----------
 def process_single_image(image_path, model, cluster_mapping, args):
     """Process a single image and return visualization data."""
-    try:
-        # Load raw linear image for correction
-        raw_linear = process_raw_image(image_path, srgb=False)
+    
+    # Load raw linear image for correction
+    raw_linear = process_raw_image(image_path, srgb=False)
+    
+    # Normalize to [0, 1] range for apply_correction
+    if raw_linear.dtype == np.uint8:
+        raw_linear = raw_linear.astype(np.float32) / 255.0
+    elif raw_linear.dtype == np.uint16:
+        raw_linear = raw_linear.astype(np.float32) / 65535.0
+    else:
+        raw_linear = raw_linear.astype(np.float32)
+        if raw_linear.max() > 1.0:
+            raw_linear = raw_linear / raw_linear.max()
+    
+    raw_linear = np.clip(raw_linear, 0.0, 1.0)
+
+    # Prepare model input
+    from torchvision import transforms
+    transform = transforms.Compose([
+        transforms.Resize((IMG_SIZE, IMG_SIZE)),
+        transforms.ToTensor(),
+        transforms.Normalize(MEAN, STD),
+    ])
+
+    # Load image for model input
+    if image_path.lower().endswith('.nef'):
+        rgb_array = process_raw_image(image_path, srgb=False)
+        pil_img = Image.fromarray(rgb_array)
+    else:
+        pil_img = Image.open(image_path).convert('RGB')
+
+    img_tensor = transform(pil_img).unsqueeze(0).to(DEVICE)
+
+    # Get CAMs
+    cam = create_cam(model, args.model, args.cam)
+
+    # Get logits/probs and predicted class
+    with torch.no_grad():
+        outputs = model(img_tensor) if args.model != 'confidence' else model(img_tensor)[0]
+        probs = F.softmax(outputs, dim=1)[0]
+        pred_idx = int(outputs.argmax(dim=1)[0].item())
+        pred_class = TRAIN_LABELS[pred_idx]
+
+    # Generate CAM for each cluster
+    cams_raw = {}
+    for i, class_name in enumerate(TRAIN_LABELS):
+        targets = [ClassifierOutputTarget(i)]
+        grayscale_cam = cam(input_tensor=img_tensor, targets=targets)[0]
+        grayscale_cam = normalize_cam_to_0_1(grayscale_cam)
+        cam_resized = cv2.resize(grayscale_cam, (raw_linear.shape[1], raw_linear.shape[0]), interpolation=cv2.INTER_LINEAR)
+        cams_raw[class_name] = cam_resized
+
+    # Smooth cams
+    cams_norm = {}
+    for k, v in cams_raw.items():
+        n = normalize_cam_to_0_1(v)
+        s = smooth_mask(n, ksize=args.smooth_ksize)
+        s = normalize_cam_to_0_1(s)
+        cams_norm[k] = s
+
+    # Convert cams -> per-pixel softmax weights
+    weights_dict, weights_stack = cams_to_softmax_weights(cams_norm, temp=args.temp)
+
+    # Precompute corrected images per cluster
+    corrected_per_cluster = {}
+    for name in TRAIN_LABELS:
+        wp = cluster_mapping[name]['wp']
+        corrected_per_cluster[name] = apply_correction(raw_linear, wp)
+
+    # Compute base correction
+    base_correction = corrected_per_cluster[pred_class]
+
+    # Blend: weighted sum across clusters
+    accumulated = np.zeros_like(raw_linear, dtype=np.float32)
+    for i, name in enumerate(TRAIN_LABELS):
+        w = weights_stack[..., i]
+        w3 = w[..., None]
+        accumulated += corrected_per_cluster[name] * w3
+
+    weight_sum = weights_stack.sum(axis=-1)
+    zero_mask = (weight_sum < 1e-6)[..., None]
+    final_image = accumulated.copy()
+    final_image[zero_mask.squeeze(-1)] = base_correction[zero_mask.squeeze(-1)]
+
+    # Compute GT mask correction if available
+    gt_corrected_srgb = None
+    gt_clusters = None
+    gt_oracle_srgb = None
+    img_name = os.path.splitext(os.path.basename(image_path))[0]
+    mask_path = os.path.join(LSMI_MASKS_DIR, f"{img_name}.npy")
+    meta_path = os.path.join(LSMI_TEST_PACKAGE, "meta.json")
+    
+    if os.path.exists(mask_path):
+        gt_mask = load_mask(mask_path, target_shape=raw_linear.shape[:2])
         
-        # Normalize to [0, 1] range for apply_correction
-        if raw_linear.dtype == np.uint8:
-            raw_linear = raw_linear.astype(np.float32) / 255.0
-        elif raw_linear.dtype == np.uint16:
-            raw_linear = raw_linear.astype(np.float32) / 65535.0
-        else:
-            raw_linear = raw_linear.astype(np.float32)
-            if raw_linear.max() > 1.0:
-                raw_linear = raw_linear / raw_linear.max()
-        
-        raw_linear = np.clip(raw_linear, 0.0, 1.0)
-
-        # Prepare model input
-        from torchvision import transforms
-        transform = transforms.Compose([
-            transforms.Resize((IMG_SIZE, IMG_SIZE)),
-            transforms.ToTensor(),
-            transforms.Normalize(MEAN, STD),
-        ])
-
-        # Load image for model input
-        if image_path.lower().endswith('.nef'):
-            rgb_array = process_raw_image(image_path, srgb=False)
-            pil_img = Image.fromarray(rgb_array)
-        else:
-            pil_img = Image.open(image_path).convert('RGB')
-
-        img_tensor = transform(pil_img).unsqueeze(0).to(DEVICE)
-
-        # Get CAMs
-        cam = create_cam(model, args.model, args.cam)
-
-        # Get logits/probs and predicted class
-        with torch.no_grad():
-            outputs = model(img_tensor) if args.model != 'confidence' else model(img_tensor)[0]
-            probs = F.softmax(outputs, dim=1)[0]
-            pred_idx = int(outputs.argmax(dim=1)[0].item())
-            pred_class = TRAIN_LABELS[pred_idx]
-
-        # Generate CAM for each cluster
-        cams_raw = {}
-        for i, class_name in enumerate(TRAIN_LABELS):
-            targets = [ClassifierOutputTarget(i)]
-            grayscale_cam = cam(input_tensor=img_tensor, targets=targets)[0]
-            grayscale_cam = normalize_cam_to_0_1(grayscale_cam)
-            cam_resized = cv2.resize(grayscale_cam, (raw_linear.shape[1], raw_linear.shape[0]), interpolation=cv2.INTER_LINEAR)
-            cams_raw[class_name] = cam_resized
-
-        # Smooth cams
-        cams_norm = {}
-        for k, v in cams_raw.items():
-            n = normalize_cam_to_0_1(v)
-            s = smooth_mask(n, ksize=args.smooth_ksize)
-            s = normalize_cam_to_0_1(s)
-            cams_norm[k] = s
-
-        # Convert cams -> per-pixel softmax weights
-        weights_dict, weights_stack = cams_to_softmax_weights(cams_norm, temp=args.temp)
-
-        # Precompute corrected images per cluster
-        corrected_per_cluster = {}
-        for name in TRAIN_LABELS:
-            wp = cluster_mapping[name]['wp']
-            corrected_per_cluster[name] = apply_correction(raw_linear, wp)
-
-        # Compute base correction
-        base_correction = corrected_per_cluster[pred_class]
-
-        # Blend: weighted sum across clusters
-        accumulated = np.zeros_like(raw_linear, dtype=np.float32)
-        for i, name in enumerate(TRAIN_LABELS):
-            w = weights_stack[..., i]
-            w3 = w[..., None]
-            accumulated += corrected_per_cluster[name] * w3
-
-        weight_sum = weights_stack.sum(axis=-1)
-        zero_mask = (weight_sum < 1e-6)[..., None]
-        final_image = accumulated.copy()
-        final_image[zero_mask.squeeze(-1)] = base_correction[zero_mask.squeeze(-1)]
-
-        # Compute GT mask correction if available
-        gt_corrected_srgb = None
-        gt_clusters = None
-        gt_oracle_srgb = None
-        img_name = os.path.splitext(os.path.basename(image_path))[0]
-        mask_path = os.path.join(LSMI_MASKS_DIR, f"{img_name}.npy")
-        meta_path = os.path.join(LSMI_TEST_PACKAGE, "meta.json")
-        
-        if os.path.exists(mask_path):
-            try:
-                gt_mask = load_mask(mask_path, target_shape=raw_linear.shape[:2])
+        if os.path.exists(meta_path):
+            with open(meta_path, 'r') as f:
+                meta_data = json.load(f)
+            
+            if img_name in meta_data:
+                meta = meta_data[img_name]
+                num_lights = meta.get("NumOfLights", 2)
                 
-                if os.path.exists(meta_path):
-                    with open(meta_path, 'r') as f:
-                        meta_data = json.load(f)
+                if gt_mask.shape[2] == num_lights:
+                    cluster_centers = load_cluster_centers()
+                    light_clusters = []
                     
-                    if img_name in meta_data:
-                        meta = meta_data[img_name]
-                        num_lights = meta.get("NumOfLights", 2)
+                    for light_num in range(1, num_lights + 1):
+                        light_key = f"Light{light_num}"
+                        if light_key not in meta:
+                            continue
+                        light_rgb = np.array(meta[light_key], dtype=np.float32)
+                        cluster_name, _ = map_illuminant_to_cluster(light_rgb, cluster_centers)
+                        light_clusters.append(cluster_name)
+                    
+                    if len(light_clusters) == num_lights:
+                        # GT cluster correction
+                        gt_accumulated = np.zeros_like(raw_linear, dtype=np.float32)
+                        for i, cluster_name in enumerate(light_clusters):
+                            weight = gt_mask[:, :, i]
+                            weight_3d = weight[..., None]
+                            gt_accumulated += corrected_per_cluster[cluster_name] * weight_3d
                         
-                        if gt_mask.shape[2] == num_lights:
-                            cluster_centers = load_cluster_centers()
-                            light_clusters = []
+                        gt_total_weight = gt_mask.sum(axis=-1, keepdims=True)
+                        gt_mask_valid = gt_total_weight > 1e-6
+                        gt_final = np.where(gt_mask_valid, gt_accumulated / (gt_total_weight + 1e-12), base_correction)
+                        gt_corrected_srgb = lin_to_srgb(gt_final)
+                        gt_clusters = light_clusters
+                        
+                        # GT oracle correction
+                        gt_oracle_accumulated = np.zeros_like(raw_linear, dtype=np.float32)
+                        for i in range(num_lights):
+                            light_key = f"Light{i+1}"
+                            if light_key not in meta:
+                                continue
+                            light_rgb = np.array(meta[light_key], dtype=np.float32)
+                            if light_rgb.sum() > 1e-8:
+                                light_wp = light_rgb / light_rgb.sum()
+                            else:
+                                light_wp = light_rgb
                             
-                            for light_num in range(1, num_lights + 1):
-                                light_key = f"Light{light_num}"
-                                if light_key not in meta:
-                                    continue
-                                light_rgb = np.array(meta[light_key], dtype=np.float32)
-                                cluster_name, _ = map_illuminant_to_cluster(light_rgb, cluster_centers)
-                                light_clusters.append(cluster_name)
-                            
-                            if len(light_clusters) == num_lights:
-                                # GT cluster correction
-                                gt_accumulated = np.zeros_like(raw_linear, dtype=np.float32)
-                                for i, cluster_name in enumerate(light_clusters):
-                                    weight = gt_mask[:, :, i]
-                                    weight_3d = weight[..., None]
-                                    gt_accumulated += corrected_per_cluster[cluster_name] * weight_3d
-                                
-                                gt_total_weight = gt_mask.sum(axis=-1, keepdims=True)
-                                gt_mask_valid = gt_total_weight > 1e-6
-                                gt_final = np.where(gt_mask_valid, gt_accumulated / (gt_total_weight + 1e-12), base_correction)
-                                gt_corrected_srgb = lin_to_srgb(gt_final)
-                                gt_clusters = light_clusters
-                                
-                                # GT oracle correction
-                                gt_oracle_accumulated = np.zeros_like(raw_linear, dtype=np.float32)
-                                for i in range(num_lights):
-                                    light_key = f"Light{i+1}"
-                                    if light_key not in meta:
-                                        continue
-                                    light_rgb = np.array(meta[light_key], dtype=np.float32)
-                                    if light_rgb.sum() > 1e-8:
-                                        light_wp = light_rgb / light_rgb.sum()
-                                    else:
-                                        light_wp = light_rgb
-                                    
-                                    light_corrected = apply_correction(raw_linear, light_wp)
-                                    weight = gt_mask[:, :, i]
-                                    weight_3d = weight[..., None]
-                                    gt_oracle_accumulated += light_corrected * weight_3d
-                                
-                                gt_oracle_final = np.where(gt_mask_valid, gt_oracle_accumulated / (gt_total_weight + 1e-12), base_correction)
-                                gt_oracle_srgb = lin_to_srgb(gt_oracle_final)
-            except Exception as e:
-                pass  # Silently skip GT if not available
-        
-        # Convert to sRGB for visualization
-        final_srgb = lin_to_srgb(final_image)
-        base_srgb = lin_to_srgb(base_correction)
-        original_vis = view_as_linear(raw_linear)
-        
-        return {
-            'img_name': img_name,
-            'original': original_vis,
-            'cam_corrected': final_srgb,
-            'base': base_srgb,
-            'gt_cluster': gt_corrected_srgb,
-            'gt_oracle': gt_oracle_srgb,
-            'gt_clusters': gt_clusters
-        }
-    except Exception as e:
-        print(f"Error processing {image_path}: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
+                            light_corrected = apply_correction(raw_linear, light_wp)
+                            weight = gt_mask[:, :, i]
+                            weight_3d = weight[..., None]
+                            gt_oracle_accumulated += light_corrected * weight_3d
+                        
+                        gt_oracle_final = np.where(gt_mask_valid, gt_oracle_accumulated / (gt_total_weight + 1e-12), base_correction)
+                        gt_oracle_srgb = lin_to_srgb(gt_oracle_final)
+    
+    # Convert to sRGB for visualization
+    final_srgb = lin_to_srgb(final_image)
+    base_srgb = lin_to_srgb(base_correction)
+    # Load original image as sRGB using camera white balance
+    original_srgb = process_raw_image(image_path, srgb=True).astype(np.float32) / 255.0
+    
+    return {
+        'img_name': img_name,
+        'original': original_srgb,
+        'cam_corrected': final_srgb,
+        'base': base_srgb,
+        'gt_cluster': gt_corrected_srgb,
+        'gt_oracle': gt_oracle_srgb,
+        'gt_clusters': gt_clusters
+    }
 
 def wrap_title(title, max_length=20):
     """Wrap title to max 2 lines if it's too long."""
@@ -396,29 +400,31 @@ def create_batch_visualization(all_results, args):
     if has_gt_oracle:
         cols_per_image = 5
     
-    # Arrange in grid: each image takes cols_per_image columns
-    # For 8 images with 4 cols each: arrange as 2 rows x 4 images = 8 images
-    # Each row has 4 images * 4 cols = 16 columns total
-    if num_images >= 2:
-        images_per_row = num_images // 2  # 2 rows
-    else:
-        images_per_row = 1
+    # Arrange in grid: divide images into 2 columns of image groups
+    # Each image group has cols_per_image columns
+    # Example: 8 images = 2 columns × 4 rows, where each image group has 5 columns
+    images_per_column = (num_images + 1) // 2  # Divide by 2, round up
+    num_rows = images_per_column
+    num_image_columns = 2  # Always 2 columns of image groups
     
-    num_rows = (num_images + images_per_row - 1) // images_per_row
-    cols = images_per_row * cols_per_image
+    cols = num_image_columns * cols_per_image  # Total columns = 2 image groups × cols_per_image
     rows = num_rows
     
     fig = plt.figure(figsize=(cols * 2, rows * 2))
     
     for img_idx, result in enumerate(all_results):
-        row = img_idx // images_per_row
-        col_start = (img_idx % images_per_row) * cols_per_image
+        # Determine which column of image groups (0 or 1)
+        image_col = img_idx % num_image_columns
+        # Determine which row within that column
+        row = img_idx // num_image_columns
+        # Starting column for this image group
+        col_start = image_col * cols_per_image
         
         # Original (save reference for label positioning)
         ax_first = plt.subplot(rows, cols, row * cols + col_start + 1)
         ax_first.imshow(result['original'])
         if row == 0:
-            ax_first.set_title(wrap_title("Original (Raw Linear)"), fontsize=9)
+            ax_first.set_title(wrap_title("Original"), fontsize=9)
         ax_first.axis('off')
         
         # CAM Corrected
@@ -646,14 +652,13 @@ def main():
     
     if os.path.exists(mask_path):
         print("Loading GT mask for comparison...")
-        try:
-            gt_mask = load_mask(mask_path, target_shape=raw_linear.shape[:2])
-            print(f"GT mask shape: {gt_mask.shape}")
-            
-            # Load meta.json to get illuminant RGBs and map to clusters
-            if not os.path.exists(meta_path):
-                print(f"Warning: meta.json not found at {meta_path}, skipping GT correction")
-            else:
+        gt_mask = load_mask(mask_path, target_shape=raw_linear.shape[:2])
+        print(f"GT mask shape: {gt_mask.shape}")
+        
+        # Load meta.json to get illuminant RGBs and map to clusters
+        if not os.path.exists(meta_path):
+            print(f"Warning: meta.json not found at {meta_path}, skipping GT correction")
+        else:
                 with open(meta_path, 'r') as f:
                     meta_data = json.load(f)
                 
@@ -735,16 +740,12 @@ def main():
                         print("GT Oracle correction computed")
                     else:
                         print(f"Warning: Could not map all {num_lights} lights to clusters or mask shape mismatch")
-                
-        except Exception as e:
-            print(f"Could not load GT mask: {e}")
-            import traceback
-            traceback.print_exc()
     
     # 11) Convert to sRGB for visualization
     final_srgb = lin_to_srgb(final_image)
     base_srgb = lin_to_srgb(base_correction)
-    original_vis = view_as_linear(raw_linear)
+    # Load original image as sRGB using camera white balance
+    original_srgb = process_raw_image(args.image, srgb=True).astype(np.float32) / 255.0
 
     # 12) Save visualization
     print("Saving visualization...")
@@ -764,8 +765,8 @@ def main():
 
     # Top row: Original
     ax = plt.subplot(rows, cols, 1)
-    ax.imshow(original_vis)
-    ax.set_title("Original (Raw Linear)")
+    ax.imshow(original_srgb)
+    ax.set_title("Original")
     ax.axis('off')
 
     # Top row: CAM Corrected
