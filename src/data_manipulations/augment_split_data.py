@@ -10,12 +10,14 @@ illuminant color, balances class distributions through augmentation, and creates
 train/val/test splits. Generates the final dataset structure used for training
 illuminant estimation models.
 
-Uses:
-    - config.config for data paths
-    - sklearn for K-means clustering
-    - PIL for image augmentation
+Make sure to have the Nikon_D810 dataset from INTEL-TAU in the Data/Nikon_D810 directory.
+This will generate the dataset/ directory with train/val/test splits.
+
+Usage:
+python augment_split_data.py
 """
 
+# Imports
 import os
 import sys
 import glob
@@ -44,7 +46,16 @@ random.seed(RANDOM_SEED)
 warnings.filterwarnings("ignore")
 
 def load_data(data_root):
-    """Load .wp files and extract chromaticity."""
+    """
+    Load .wp files and extract chromaticity.
+    
+    Args:
+        data_root: Root directory containing .wp files
+    
+    Returns:
+        DataFrame with chromaticity data
+    """
+
     data_list = []
     print(f"Loading .wp files from {data_root}...")
     
@@ -84,7 +95,17 @@ def load_data(data_root):
     return pd.DataFrame(data_list)
 
 def perform_clustering(df, n_clusters=5):
-    """Perform KMeans clustering on chromaticity."""
+    """
+    Perform KMeans clustering on chromaticity.
+    
+    Args:
+        df: DataFrame with chromaticity data
+        n_clusters: Number of clusters
+    
+    Returns:
+        Tuple of (df_with_clusters, cluster_names, sorted_clusters)
+    """
+
     print(f"performing KMeans clustering with k={n_clusters}...")
     X = df[['mean_r', 'mean_g', 'mean_b']].values
     kmeans = KMeans(n_clusters=n_clusters, random_state=RANDOM_SEED, n_init=10)
@@ -115,7 +136,18 @@ def perform_clustering(df, n_clusters=5):
     return df, cluster_names, sorted_clusters
 
 def augment_image_crop_resize(img, original_size, crop_ratio_range=(0.3, 0.7)):
-    """Random crop and resize."""
+    """
+    Random crop and resize augmentation.
+    
+    Args:
+        img: PIL Image to augment
+        original_size: Original image size (width, height)
+        crop_ratio_range: Range for crop ratio
+    
+    Returns:
+        Augmented PIL Image
+    """
+
     width, height = original_size
     crop_ratio = np.random.uniform(*crop_ratio_range)
     crop_w = int(width * crop_ratio)
@@ -138,7 +170,20 @@ def create_augmented_image(
     flip_horizontal_prob=0.5,
     flip_vertical_prob=0.2,
 ):
-    """Create one augmented version of an image."""
+    """
+    Create one augmented version of an image.
+    
+    Args:
+        img_path: Path to image file
+        original_size: Original image size (width, height)
+        crop_ratio_range: Range for crop ratio
+        flip_horizontal_prob: Probability of horizontal flip
+        flip_vertical_prob: Probability of vertical flip
+    
+    Returns:
+        Augmented PIL Image or None if error
+    """
+
     try:
         with Image.open(img_path) as img:
             if original_size is None:
@@ -160,7 +205,16 @@ def create_augmented_image(
         return None
 
 def remove_outliers(df):
-    """Remove outliers based on chromaticity thresholds."""
+    """
+    Remove outliers based on chromaticity thresholds.
+    
+    Args:
+        df: DataFrame with chromaticity data
+    
+    Returns:
+        Cleaned DataFrame with outliers removed
+    """
+
     print("=== OUTLIER REMOVAL ===")
     print(f"Original dataset: {len(df)} samples")
     
@@ -182,6 +236,10 @@ def remove_outliers(df):
     return df_clean
 
 def main():
+    """
+    Main function for dataset augmentation and splitting.
+    """
+    
     # 1. Load Data
     df = load_data(DATA_ROOT)
     if df.empty:

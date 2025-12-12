@@ -11,10 +11,11 @@ test dataset. Generates CAM heatmaps for each model and computes spatial metrics
 masks. Supports single model evaluation or comprehensive matrix evaluation across
 all model-CAM combinations.
 
-Uses:
-    - config.config for paths and device
-    - src.utils for model loading, CAM generation, and metrics
-    - pytorch_grad_cam for Class Activation Mapping
+Usage:
+python evaluate_masks.py --model model_name --cam cam_method --gt_threshold gt_threshold --pred_threshold pred_threshold
+
+Example:
+python evaluate_masks.py --model standard --cam gradcam --gt_threshold 0.0 --pred_threshold 0.1
 """
 
 import os
@@ -40,12 +41,33 @@ from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 import json
 
 def load_cluster_centers(path):
+    """
+    Load cluster centers from numpy file.
+    
+    Args:
+        path: Path to cluster centers file
+    
+    Returns:
+        Dictionary mapping cluster names to center values
+    """
+
     data = np.load(path, allow_pickle=True)
     if data.shape == ():
         data = data.item()
     return data
 
 def get_nearest_cluster(rgb, centers):
+    """
+    Find nearest cluster for given RGB value.
+    
+    Args:
+        rgb: RGB value to classify
+        centers: Dictionary of cluster centers
+    
+    Returns:
+        Name of nearest cluster
+    """
+
     min_dist = float('inf')
     best_name = "Unknown"
     query = np.array(rgb)
@@ -74,6 +96,7 @@ def evaluate_single_model(model_name, cam_method, gt_threshold=0.5, pred_thresho
     Returns:
         Dictionary with metrics per cluster and overall averages, or None if error
     """
+
     try:
         model = load_model(model_name)
     except Exception as e:
@@ -125,14 +148,6 @@ def evaluate_single_model(model_name, cam_method, gt_threshold=0.5, pred_thresho
             raw_mask = load_mask(mask_path, target_shape=img_rgb.shape)
             
             # Convert to Cluster Mask
-            # Load meta and centers if not loaded (should be loaded outside loop ideally, but for now inside or lazily)
-            # To avoid reloading every time, let's assume they are loaded.
-            # Actually, let's load them at the start of evaluate_single_model or pass them in.
-            # For simplicity, I'll load them here but cache them if possible. 
-            # Or better, I will assume `meta` and `centers` are available. 
-            # I will modify the function signature to accept them or load them once.
-            
-            # Let's load them inside the loop for safety/simplicity as performance impact is negligible compared to model inference.
             meta_path = os.path.join(LSMI_TEST_PACKAGE, "meta.json")
             with open(meta_path, 'r') as f:
                 meta = json.load(f)
@@ -197,7 +212,13 @@ def evaluate_single_model(model_name, cam_method, gt_threshold=0.5, pred_thresho
 
 
 def print_summary(df_results):
-    """Print summary statistics."""
+    """
+    Print summary statistics from evaluation results.
+    
+    Args:
+        df_results: DataFrame containing evaluation results
+    """
+
     if df_results is None or df_results.empty:
         print("No results to summarize.")
         return
@@ -232,7 +253,17 @@ def print_summary(df_results):
 
 
 def evaluate_matrix(gt_threshold=0.0, pred_threshold=0.1):
-    """Run comprehensive evaluation matrix on all model-CAM combinations."""
+    """
+    Run comprehensive evaluation matrix on all model-CAM combinations.
+    
+    Args:
+        gt_threshold: Binarization threshold for ground truth masks
+        pred_threshold: Binarization threshold for predicted masks
+    
+    Returns:
+        DataFrame with evaluation results for all combinations
+    """
+
     print("Starting Comprehensive Evaluation Matrix...")
     print(f"GT Threshold: {gt_threshold}, Pred Threshold: {pred_threshold}")
     
@@ -286,6 +317,10 @@ def evaluate_matrix(gt_threshold=0.0, pred_threshold=0.1):
 
 
 def main():
+    """
+    Main function for mask evaluation.
+    """
+    
     parser = argparse.ArgumentParser(description='Evaluate model CAM predictions against LSMI ground truth masks')
     parser.add_argument('--model', type=str, default='standard', 
                        choices=MODEL_CHOICES,

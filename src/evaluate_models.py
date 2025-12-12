@@ -11,11 +11,11 @@ generates confusion matrices for all supported model architectures.
 
 Supports: standard, confidence, paper, illumicam3
 
-Uses:
-    - config.config for paths and device
-    - src.utils for model loading
-    - src.data_loader for test data
-    - sklearn for classification metrics
+Usage:
+python evaluate_models.py --model-type model_name --batch-size batch_size
+
+Example:
+python evaluate_models.py --model-type standard
 """
 
 import os
@@ -50,6 +50,7 @@ def evaluate_test_set(model_type='standard', batch_size=256):
         label_names: Class names
         test_acc: Test accuracy
     """
+    
     print("\n" + "="*60)
     print("TEST SET EVALUATION")
     print("="*60)
@@ -123,7 +124,10 @@ def evaluate_test_set(model_type='standard', batch_size=256):
 
 
 def main():
-    """Main evaluation function."""
+    """
+    Main evaluation function.
+    """
+
     parser = argparse.ArgumentParser(description='Evaluate illuminant estimation model')
     parser.add_argument('--model-type', type=str, 
                        choices=['standard', 'confidence', 'paper', 'illumicam3'],

@@ -12,6 +12,23 @@
 
 This project implements multiple CNN architectures for illuminant estimation. We train models to classify scene illuminants into five categories (Very Warm, Warm, Neutral, Cool, Very Cool) and use Class Activation Maps (CAM) to visualize spatial attention. The project includes spatially-aware color correction using CAM-guided white balance, evaluation on LSMI (Localized Spatially Mixed Illuminant) test images, and comparison of different CAM methods (GradCAM, GradCAM++, ScoreCAM).
 
+## Resources
+
+### Model Weights and Training Dataset Splits
+- **Google Drive**: [Download model weights and train/val/test splits](https://drive.google.com/drive/folders/1yWjb--TbCoseO4ZM1QqgypGkP8Ifm-Id?usp=sharing)
+  - Contains trained model weights for all architectures
+  - Includes train/val/test dataset splits
+
+### Dataset Downloads
+
+#### LSMI Dataset
+- **Repository**: [LSMI Dataset GitHub](https://github.com/DY112/LSMI-dataset)
+  - Official repository for the Large Scale Multi-Illuminant (LSMI) dataset
+
+#### INTEL-TAU Dataset
+- **Download**: [INTEL-TAU Dataset](https://etsin.fairdata.fi/dataset/f0570a3f-3d77-4f44-9ef1-99ab4878f17c)
+  - Raw illuminant data used for training
+
 ## Dependencies
 
 ### Required Packages
@@ -49,11 +66,13 @@ Final_Project/
 │   │   └── model_illumicam3.py          # IllumiCam3 (Global Average Pooling)
 │   ├── display_scripts/
 │   │   ├── visualize_cam.py             # CAM visualization tool
-│   │   ├── visualize_gt_masks.py        # Ground truth mask visualization
+│   │   ├── visualize_lsmi_masks.py      # Ground truth mask visualization
 │   │   └── correct_with_cam.py          # CAM-guided color correction
 │   ├── data_manipulations/
 │   │   ├── augment_split_data.py        # Dataset creation and splitting
-│   │   └── generate_lsmi_masks.py       # LSMI ground truth mask generation
+│   │   ├── balance_lsmi.py              # LSMI dataset balancing
+│   │   ├── generate_lsmi_mixture_maps.py # LSMI mixture map generation
+│   │   └── prepare_lsmi_test_package.py # LSMI test package preparation
 │   ├── utils.py                         # Core utilities
 │   ├── data_loader.py                   # Data loading and transforms
 │   ├── train.py                         # Training script
@@ -66,7 +85,8 @@ Final_Project/
 │   │   └── masks/                       # Generated masks for all images
 │   ├── LSMI_Test_Package/               # LSMI preprocessed
 │   │   ├── images/                      # NEF test images
-│   │   └── masks/                       # Ground truth masks (.npy)
+│   │   ├── masks/                       # Ground truth masks (.npy)
+│   │   └── meta.json                    # Metadata for test package
 │   └── info/                            # Camera CCMs and reference WPs
 ├── dataset/                             # Generated training dataset
 │   ├── train/
@@ -96,11 +116,22 @@ Final_Project/
 python src/data_manipulations/augment_split_data.py
 ```
 
-#### Generate LSMI Ground Truth Masks
+#### Balance LSMI Dataset
 ```bash
-python src/data_manipulations/generate_lsmi_masks.py \
-    --lsmi_root Data/LSMI/nikon \
-    --output_dir Data/LSMI_Test_Package/masks
+# First, balance the LSMI dataset to ensure each scene has illuminants from different clusters
+# This creates lsmi_balanced.csv in the current directory
+python src/data_manipulations/balance_lsmi.py
+```
+
+#### Prepare LSMI Test Package
+```bash
+# Then, prepare the test package using the balanced CSV
+# This will generate mixture maps and copy necessary files
+python src/data_manipulations/prepare_lsmi_test_package.py \
+    --csv lsmi_balanced.csv \
+    --src_root Data/LSMI/nikon \
+    --output_dir LSMI_Test_Package \
+    --meta Data/LSMI/nikon/meta.json
 ```
 
 ### 2. Training
@@ -140,11 +171,15 @@ python src/evaluate_models.py \
 python src/evaluate_masks.py \
     --model standard \
     --cam gradcam \
+    --gt_threshold 0.0 \
+    --pred_threshold 0.1 \
     --output results.csv
 
 # Comprehensive matrix evaluation (all combinations)
 python src/evaluate_masks.py \
     --matrix \
+    --matrix_gt_threshold 0.0 \
+    --matrix_pred_threshold 0.1 \
     --output results_matrix.csv
 ```
 
@@ -152,28 +187,59 @@ python src/evaluate_masks.py \
 
 #### Visualize CAM on Images
 ```bash
-
 # From LSMI NEF file
 python src/display_scripts/visualize_cam.py \
     --model standard \
     --cam gradcam \
     --layer conv5 \
     --image Data/LSMI_Test_Package/images/Place101.nef
+
+# Interactive mode
+python src/display_scripts/visualize_cam.py \
+    --model standard \
+    --cam gradcam \
+    --layer conv5 \
+    --image Data/LSMI_Test_Package/images/Place101.nef \
+    --interactive
 ```
 
 #### Visualize Ground Truth Masks
 ```bash
-python src/display_scripts/visualize_gt_masks.py \
+python src/display_scripts/visualize_lsmi_masks.py \
     --image Data/LSMI_Test_Package/images/Place101.nef
+
+# With custom package path
+python src/display_scripts/visualize_lsmi_masks.py \
+    --image Data/LSMI_Test_Package/images/Place101.nef \
+    --package_path Data/LSMI_Test_Package
 ```
 
 #### CAM-Guided Color Correction
 ```bash
+# Single image correction
 python src/display_scripts/correct_with_cam.py \
     --image Data/LSMI_Test_Package/images/Place101.nef \
     --model standard \
     --cam gradcam \
     --layer conv5
+
+# Process multiple random images
+python src/display_scripts/correct_with_cam.py \
+    --model standard \
+    --cam gradcam \
+    --layer conv5 \
+    --num-images 4
+
+# With custom parameters
+python src/display_scripts/correct_with_cam.py \
+    --image Data/LSMI_Test_Package/images/Place101.nef \
+    --model standard \
+    --cam gradcam \
+    --layer conv5 \
+    --threshold 0.10 \
+    --smooth_ksize 41 \
+    --temp 0.7 \
+    --output visualizations/cam_correction
 ```
 
 ## Model Architectures
@@ -223,4 +289,4 @@ MacOS 15.1, MacBook Pro, Apple Silicon (MPS acceleration)
 
 ## License
 
-This project is for educational purposes as part of CS7180 Advanced Computer Vision course.
+This project is for educational purposes as part of CS7180 Advanced Perception course.

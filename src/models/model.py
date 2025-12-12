@@ -17,19 +17,17 @@ DROPOUT_RATE = 0.25
 class IlluminantCNN(nn.Module):
     """
     Custom CNN for illuminant classification.
-    
-    Architecture:
-    - Conv Block 1: Conv(32, 10x10) -> BN -> ReLU -> MaxPool
-    - Conv Block 2: Conv(64, 7x7) -> BN -> ReLU -> MaxPool
-    - Conv Block 3: Conv(96, 5x5) -> BN -> ReLU
-    - Conv Block 4: Conv(128, 5x5) -> BN -> ReLU
-    - Conv Block 5: Conv(256, 3x3) -> BN -> ReLU
-    - Global Max Pooling
-    - FC1: 256 -> 1024 -> ReLU -> Dropout
-    - FC2: 1024 -> num_classes
     """
     
     def __init__(self, num_classes=NUM_CLASSES, dropout_rate=DROPOUT_RATE):
+        """
+        Initialize IlluminantCNN.
+        
+        Args:
+            num_classes: Number of output classes
+            dropout_rate: Dropout probability for regularization
+        """
+
         super(IlluminantCNN, self).__init__()
 
         self.conv1 = nn.Conv2d(3, 32, kernel_size=10)
@@ -58,6 +56,16 @@ class IlluminantCNN(nn.Module):
         self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
+        """
+        Forward pass through the network.
+        
+        Args:
+            x: Input tensor of shape (batch_size, 3, height, width)
+        
+        Returns:
+            Logits tensor of shape (batch_size, num_classes)
+        """
+
         x = self.relu(self.bn1(self.conv1(x)))
         x = self.pool1(x)
 
@@ -78,7 +86,16 @@ class IlluminantCNN(nn.Module):
 
 
 def count_parameters(model):
-    """Count total and trainable parameters in the model."""
+    """
+    Count total and trainable parameters in the model.
+    
+    Args:
+        model: PyTorch model
+    
+    Returns:
+        Tuple of (total_params, trainable_params)
+    """
+    
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     return total_params, trainable_params

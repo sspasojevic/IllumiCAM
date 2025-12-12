@@ -1,4 +1,20 @@
+"""
+Sara Spasojevic, Adnan Amir, Ritik Bompilwar
+CS7180 Final Project, Fall 2025
+December 9, 2025
 
+LSMI Balance Script
+
+Balances the LSMI dataset by ensuring each scene has at least 2 illuminants from different clusters.
+Make sure to have the LSMI dataset in the Data/LSMI/nikon directory.
+
+Usage:
+python balance_lsmi.py --output_dir balanced_lsmi.csv
+
+Creates a balanced csv file that can be used to create the test package.
+"""
+
+# Imports
 import os
 import sys
 import json
@@ -11,9 +27,8 @@ from tqdm import tqdm
 from sklearn.cluster import KMeans
 
 # Add repo root to path to import config
-# Assuming we are in IllumiCAM/src/data_manipulations
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__)) # .../src/data_manipulations
-REPO_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR)) # .../IllumiCAM
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
 sys.path.insert(0, REPO_ROOT)
 
 from config.config import LSMI_DATASET_ROOT, CLUSTER_CENTERS_PATH
@@ -22,8 +37,6 @@ from config.config import LSMI_DATASET_ROOT, CLUSTER_CENTERS_PATH
 LSMI_ROOT = os.path.join(LSMI_DATASET_ROOT, "nikon")
 META_FILE = os.path.join(LSMI_ROOT, "meta.json")
 CLUSTER_CENTERS_FILE = CLUSTER_CENTERS_PATH
-
-
 
 # Full Macbeth Color Checker Chart Coordinates (Source)
 FULL_CELLCHART = np.float32([
@@ -59,6 +72,17 @@ FULL_CELLCHART = np.float32([
 MCCBOX = np.float32([[0.00, 0.00], [16.75, 0.00], [16.75, 11.25], [0.00, 11.25]])
 
 def manual_perspective_transform(points, h):
+    """
+    Apply perspective transformation to 2D points using homography matrix.
+    
+    Args:
+        points: Array of 2D points
+        h: Homography matrix
+    
+    Returns:
+        Transformed 2D points
+    """
+
     points = np.array(points)
     if len(points.shape) != 2:
         points = points.reshape(-1, 2)
@@ -68,6 +92,17 @@ def manual_perspective_transform(points, h):
     return transformed[:, :2]
 
 def get_patch_chroma(img, mcc_coord):
+    """
+    Extract average chromaticity from gray patches of Macbeth Color Checker.
+    
+    Args:
+        img: Input image
+        mcc_coord: Macbeth Color Checker coordinates
+    
+    Returns:
+        Average chromaticity or None if extraction fails
+    """
+
     h, w = img.shape[:2]
     if np.any(mcc_coord > np.array([w, h])):
         mcc_coord = mcc_coord * 0.5
@@ -98,6 +133,17 @@ def get_patch_chroma(img, mcc_coord):
     return None
 
 def extract_illuminants(meta_data, max_samples=None):
+    """
+    Extract illuminant chromaticities from LSMI metadata.
+    
+    Args:
+        meta_data: Dictionary containing LSMI metadata
+        max_samples: Maximum number of samples to process
+    
+    Returns:
+        DataFrame with illuminant chromaticity data
+    """
+
     illuminants = []
     places = list(meta_data.keys())
     
@@ -118,7 +164,7 @@ def extract_illuminants(meta_data, max_samples=None):
             if light_key in meta:
                 light_rgb = meta[light_key]
                 if len(light_rgb) >= 3:
-                    # Normalize to chromaticity (r = R / (R+G+B))
+                    # Normalize to chromaticity
                     total = sum(light_rgb)
                     if total > 0:
                         r = light_rgb[0] / total
@@ -137,7 +183,11 @@ def extract_illuminants(meta_data, max_samples=None):
 
 
 def main():
-    # Load Data
+    """
+    Balance LSMI dataset by cluster diversity.
+    """
+    
+    # Load metadata
     if os.path.exists(META_FILE):
         with open(META_FILE, "r") as f:
             meta_data = json.load(f)
@@ -146,28 +196,24 @@ def main():
         print("meta.json not found!")
         meta_data = {}
 
-    # Run extraction
+    # Extract illuminants
     df = extract_illuminants(meta_data, max_samples=None)
-
-    # Ensure no duplicates
     df = df.drop_duplicates(subset=['place', 'light'])
 
     print(f"Extracted {len(df)} illuminants from {df['place'].nunique()} scenes.")
 
-    # Filter for scenes with at least 2 illuminants
+    # Filter scenes with at least 2 illuminants
     place_counts = df['place'].value_counts()
     valid_places = place_counts[place_counts >= 2].index
     df = df[df['place'].isin(valid_places)].copy()
     print(f"Filtered to {len(df)} illuminants from {len(valid_places)} scenes (>= 2 lights).")
 
-
-    # Assign Clusters
+    # Assign clusters
     if os.path.exists(CLUSTER_CENTERS_FILE):
         centers = np.load(CLUSTER_CENTERS_FILE, allow_pickle=True)
         if centers.shape == (): centers = centers.item()
         
         if isinstance(centers, dict):
-            # Keys are 'Very_Warm', 'Warm', 'Neutral', 'Cool', 'Very_Cool'
             labels = list(centers.keys())
             center_points = np.array([centers[k] for k in labels])
         else:
@@ -176,7 +222,6 @@ def main():
             
         print(f"Loaded {len(center_points)} cluster centers.")
         
-        # Ensure float64 for sklearn
         center_points = center_points.astype(np.float64)
         X = df[['r', 'g', 'b']].values.astype(np.float64)
         
@@ -193,7 +238,7 @@ def main():
         print("Illuminant cluster counts (before distinct cluster filtering):")
         print(df['cluster_name'].value_counts())
 
-        # Filter scenes: Must have illuminants from at least 2 DIFFERENT clusters
+        # Filter scenes with illuminants from at least 2 different clusters
         valid_places_distinct = []
         for place in df['place'].unique():
             place_clusters = df[df['place'] == place]['cluster_name'].unique()
@@ -206,17 +251,14 @@ def main():
         print("Illuminant cluster counts (after distinct cluster filtering):")
         print(df['cluster_name'].value_counts())
         
-        # Balance Scenes based on "Rarest" Cluster
-        # Define rarity hierarchy (based on typical distribution or just preference)
-        # We want to prioritize Very_Warm and Warm
+        # Balance scenes by rarest cluster
         rarity_order = ["Very_Warm", "Warm", "Very_Cool", "Neutral", "Cool"]
         rarity_rank = {name: i for i, name in enumerate(rarity_order)}
         
-        # Determine the "rarest" cluster for each scene
+        # Determine rarest cluster for each scene
         scene_rarity = []
         for place in df['place'].unique():
             place_clusters = df[df['place'] == place]['cluster_name'].unique()
-            # Find the cluster with the lowest rank (most rare)
             best_rank = float('inf')
             best_cluster = None
             for c in place_clusters:

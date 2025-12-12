@@ -5,6 +5,12 @@ December 9, 2025
 
 Unified Training Script for all model types.
 Supports: standard, confidence, paper, illumicam3
+
+Usage:
+python train.py --model-type model_name --batch-size batch_size
+
+Example:
+python train.py --model-type standard
 """
 
 import os
@@ -45,6 +51,7 @@ def train_one_epoch_standard(model, loader, criterion, optimizer, device):
     Returns:
         Tuple of (average_loss, accuracy)
     """
+    
     model.train()
     running_loss = 0.0
     correct = 0
@@ -84,6 +91,7 @@ def train_one_epoch_confidence(model, loader, criterion, optimizer, device):
     Returns:
         Tuple of (average_loss, accuracy)
     """
+
     model.train()
     running_loss = 0.0
     correct = 0
@@ -131,6 +139,7 @@ def validate_standard(model, loader, criterion, device):
     Returns:
         Tuple of (average_loss, accuracy)
     """
+
     model.eval()
     running_loss = 0.0
     correct = 0
@@ -163,6 +172,7 @@ def validate_confidence(model, loader, criterion, device):
     Returns:
         Tuple of (average_loss, accuracy)
     """
+
     model.eval()
     running_loss = 0.0
     correct = 0
@@ -191,6 +201,7 @@ def plot_training_curves(history, save_path, model_type):
         save_path: Path to save the plot
         model_type: Model type name for title
     """
+
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
     
     ax1.plot(history["train_loss"], label="Train")
@@ -215,6 +226,10 @@ def plot_training_curves(history, save_path, model_type):
 
 
 def main():
+    """
+    Main training function.
+    """
+
     parser = argparse.ArgumentParser(description='Unified Training Script')
     parser.add_argument('--model-type', type=str, 
                        choices=['standard', 'confidence', 'paper', 'illumicam3'],

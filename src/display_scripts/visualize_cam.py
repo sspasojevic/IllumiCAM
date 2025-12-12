@@ -12,12 +12,14 @@ original images and CAM heatmaps for each illuminant class.
 
 Supports: standard, confidence, paper, illumicam3 models
 
-Uses:
-    - config.config for paths and model settings
-    - src.utils for model loading and CAM creation
-    - pytorch_grad_cam for CAM generation
+Usage:
+python visualize_cam.py --model model_name --cam cam_method --layer layer_name --image path/to/image.nef
+
+Example:
+python visualize_cam.py --model standard --cam gradcam --layer conv5 --image Data/LSMI_Test_Package/images/Place101.nef
 """
 
+# Imports
 import os
 import sys
 import argparse
@@ -41,9 +43,18 @@ from src.data_loader import get_datasets, get_dataloaders
 # CAM methods for CLI
 CAM_METHODS = ['gradcam', 'gradcam++', 'scorecam']
 
-
 def get_available_layers(model, model_type):
-    """Extract available convolutional layers from model."""
+    """
+    Extract available convolutional layers from model.
+    
+    Args:
+        model: PyTorch model
+        model_type: Type of model ('standard', 'confidence', 'paper', 'illumicam3')
+    
+    Returns:
+        List of tuples (layer_name, layer_object)
+    """
+
     layers = []
     
     if model_type == 'standard':
@@ -84,7 +95,18 @@ def get_available_layers(model, model_type):
 
 
 def tensor_to_rgb(img_tensor, mean, std):
-    """Convert normalized tensor to RGB [0,1] for visualization."""
+    """
+    Convert normalized tensor to RGB [0,1] for visualization.
+    
+    Args:
+        img_tensor: Normalized image tensor
+        mean: Mean values used for normalization
+        std: Standard deviation values used for normalization
+    
+    Returns:
+        RGB image array in range [0, 1]
+    """
+
     img_np = img_tensor.detach().cpu().numpy().transpose(1, 2, 0)
     img_np = std * img_np + mean
     img_np = np.clip(img_np, 0.0, 1.0)
@@ -92,8 +114,16 @@ def tensor_to_rgb(img_tensor, mean, std):
 
 
 def load_image_from_path(img_path):
-    """Load and preprocess a single image from path."""
+    """
+    Load and preprocess a single image from path.
     
+    Args:
+        img_path: Path to image file (supports .nef and standard formats)
+    
+    Returns:
+        Tuple of (image_tensor, pil_image)
+    """
+
     transform = transforms.Compose([
         transforms.Resize((IMG_SIZE, IMG_SIZE)),
         transforms.ToTensor(),
@@ -112,7 +142,16 @@ def load_image_from_path(img_path):
 
 
 def generate_heatmaps(model_type, cam_method, layer_name, image_path):
-    """Main visualization function."""
+    """
+    Main visualization function.
+    
+    Args:
+        model_type: Type of model to use
+        cam_method: CAM method to use
+        layer_name: Target layer name
+        image_path: Path to input image
+    """
+
     # Load model
     print(f"\nLoading {model_type} model...")
     model = load_model(model_type)
@@ -247,7 +286,10 @@ def generate_heatmaps(model_type, cam_method, layer_name, image_path):
 
 
 def interactive_mode():
-    """Interactive mode for selecting model, layer, and CAM method."""
+    """
+    Interactive mode for selecting model, layer, and CAM method.
+    """
+
     print("\n" + "="*60)
     print("INTERACTIVE CAM VISUALIZATION")
     print("="*60)
@@ -285,6 +327,10 @@ def interactive_mode():
 
 
 def main():
+    """
+    Main function for CAM visualization.
+    """
+    
     parser = argparse.ArgumentParser(description='Unified CAM Visualization Tool')
     parser.add_argument('--model', type=str, choices=list(MODEL_PATHS.keys()), default='standard',
                        help='Model name: standard, confidence, paper, or illumicam3 (default: standard)')

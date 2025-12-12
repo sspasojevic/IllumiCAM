@@ -26,6 +26,14 @@ class IllumiCam3(nn.Module):
     """
     
     def __init__(self, num_classes=NUM_CLASSES, dropout_rate=DROPOUT_RATE):
+        """
+        Initialize IllumiCam3.
+
+        Args:
+            num_classes: Number of output classes
+            dropout_rate: Dropout probability for regularization
+        """
+
         super(IllumiCam3, self).__init__()
 
         # Conv Block 1: Conv(32, 10x10) -> BN -> ReLU -> MaxPool
@@ -61,6 +69,16 @@ class IllumiCam3(nn.Module):
         self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
+        """
+        Forward pass through the network.
+        
+        Args:
+            x: Input tensor of shape (batch_size, 3, height, width)
+        
+        Returns:
+            Logits tensor of shape (batch_size, num_classes)
+        """
+        
         # Block 1
         x = self.relu(self.bn1(self.conv1(x)))
         x = self.pool1(x)

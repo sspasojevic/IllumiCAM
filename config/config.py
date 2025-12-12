@@ -8,13 +8,9 @@ Centralized Configuration Module
 This module contains all configuration constants, paths, and model registries
 for the illuminant estimation project. It serves as the single source of truth
 for device selection, file paths, training hyperparameters, and model definitions.
-
-Exports:
-    - DEVICE: Auto-detected compute device (CUDA, MPS, or CPU)
-    - All paths: Data, models, output directories
-    - Training config: Hyperparameters, batch sizes, learning rates
-    - Model registry: MODELS, MODEL_PATHS, TARGET_LAYERS
 """
+
+# Imports
 import os
 import torch
 

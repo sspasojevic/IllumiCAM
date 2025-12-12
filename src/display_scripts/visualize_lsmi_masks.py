@@ -1,3 +1,17 @@
+"""
+Sara Spasojevic, Adnan Amir, Ritik Bompilwar
+CS7180 Final Project, Fall 2025
+December 9, 2025
+
+LSMI Mask Visualization Tool
+
+Visualizes LSMI ground truth masks overlaid on raw images. Supports both full-size
+and half-size masks. Uses nearest cluster assignment for illuminant color labeling.
+
+Outputs PNG visualizations with illuminant labels and cluster assignments.
+"""
+
+# Imports
 import os
 import sys
 import numpy as np
@@ -11,20 +25,40 @@ import json
 import rawpy
 
 # Add repo root to path to import config
-# Assuming we are in IllumiCAM/src/display_scripts
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__)) # .../src/display_scripts
-REPO_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR)) # .../IllumiCAM
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
 sys.path.insert(0, REPO_ROOT)
 
 from config.config import LSMI_TEST_PACKAGE, LSMI_MASKS_DIR, CLUSTER_CENTERS_PATH, VISUALIZATIONS_DIR
 
 def load_cluster_centers(path):
+    """
+    Load cluster centers from numpy file.
+    
+    Args:
+        path: Path to cluster centers file
+    
+    Returns:
+        Dictionary mapping cluster names to center values
+    """
+
     data = np.load(path, allow_pickle=True)
     if data.shape == ():
         data = data.item()
     return data
 
 def get_nearest_cluster(rgb, centers):
+    """
+    Find nearest cluster for given RGB value.
+    
+    Args:
+        rgb: RGB value to classify
+        centers: Dictionary of cluster centers
+    
+    Returns:
+        Name of nearest cluster
+    """
+
     min_dist = float('inf')
     best_name = "Unknown"
     query = np.array(rgb)
@@ -37,19 +71,29 @@ def get_nearest_cluster(rgb, centers):
     return best_name
 
 def process_raw_image(raw_path):
-    # Using similar logic to original script: linear RGB for visualization?
-    # Original script used: raw.postprocess(gamma=(1,1), no_auto_bright=True, output_bps=16, user_wb=[1,1,1,1])
-    # visualize_gt_masks.py uses: raw.postprocess(half_size=True, use_camera_wb=False, user_wb=[1,1,1,1], no_auto_bright=True, output_color=rawpy.ColorSpace.raw)
-    # I will stick to the original script logic as requested ("keep the logic same as the current one")
-    # But I will use half_size=True if the mask is half size? 
-    # The generated masks were full size I believe.
-    # Let's use full size to be safe, or check dimensions.
+    """
+    Process RAW image to linear RGB for visualization.
     
+    Args:
+        raw_path: Path to RAW image file
+    
+    Returns:
+        Processed RGB image array
+    """
+
     with rawpy.imread(raw_path) as raw:
         rgb = raw.postprocess(gamma=(1,1), no_auto_bright=True, output_bps=8, user_wb=[1,1,1,1])
     return rgb
 
 def visualize_lsmi_masks(image_path, package_path=None):
+    """
+    Visualize LSMI ground truth masks overlaid on raw images.
+    
+    Args:
+        image_path: Path to input image
+        package_path: Optional path to LSMI test package root
+    """
+
     # Determine paths
     if package_path:
         test_package = package_path
@@ -60,7 +104,7 @@ def visualize_lsmi_masks(image_path, package_path=None):
 
     # Derive paths
     img_basename = os.path.splitext(os.path.basename(image_path))[0]
-    place_name = img_basename # Assuming filename is PlaceX.nef
+    place_name = img_basename
     
     # Load meta
     meta_path = os.path.join(test_package, "meta.json")
@@ -91,11 +135,8 @@ def visualize_lsmi_masks(image_path, package_path=None):
     if mask.shape[:2] != img.shape[:2]:
         print(f"Resizing mask from {mask.shape} to {img.shape}")
         mask = cv2.resize(mask, (img.shape[1], img.shape[0]), interpolation=cv2.INTER_LINEAR)
-        # Re-normalize if resizing introduced artifacts? 
-        # Linear interpolation is fine for visualization.
 
-    # Load Centers
-    # Try loading from package first
+    # Load cluster centers (prefer package-specific, fallback to global)
     centers_path = os.path.join(test_package, "cluster_centers.npy")
     if not os.path.exists(centers_path):
         centers_path = CLUSTER_CENTERS_PATH
@@ -117,18 +158,14 @@ def visualize_lsmi_masks(image_path, package_path=None):
             
         ax = axes[i]
         
-        # Get mask channel
+        # Get mask channel and overlay on image
         m = mask[:,:,i]
-        
-        # Overlay
         ax.imshow(img)
         ax.imshow(m, cmap='jet', alpha=0.5)
         
-        # Get illuminant info
+        # Get illuminant chroma and find nearest cluster
         light_key = f"Light{i+1}"
-        light_chroma = place_info[light_key] # [r, g, b]
-        
-        # Find cluster
+        light_chroma = place_info[light_key]
         cluster_name = get_nearest_cluster(light_chroma, centers)
         
         ax.set_title(f"{place_name} - Light {i+1} - Cluster: {cluster_name}")
@@ -145,6 +182,10 @@ def visualize_lsmi_masks(image_path, package_path=None):
     print(f"Saved visualization to {save_path}")
 
 def main():
+    """
+    Main function for LSMI mask visualization.
+    """
+    
     parser = argparse.ArgumentParser()
     parser.add_argument("--image", required=True, help="Path to NEF image")
     parser.add_argument("--package_path", help="Path to LSMI Test Package root (overrides config)")

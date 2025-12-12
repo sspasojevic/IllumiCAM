@@ -8,17 +8,9 @@ Core Utilities Module
 This module provides essential utility functions for model loading, CAM generation,
 evaluation metrics, and RAW image processing. Eliminates code duplication across
 multiple scripts by centralizing commonly used operations.
-
-Functions:
-    - load_model(): Load any model with weights
-    - create_cam(): Create CAM instance for any model
-    - calculate_metrics(): Compute IOU, DICE, MAE metrics
-    - process_raw_image(): Process NEF RAW files
-    - load_mask(): Load ground truth masks
-
-Classes:
-    - ModelWrapper: Compatibility wrapper for pytorch_grad_cam
 """
+
+# Imports
 import os
 import torch
 import torch.nn as nn
@@ -77,18 +69,32 @@ class ModelWrapper(nn.Module):
     Wrapper to make models compatible with pytorch_grad_cam library.
     
     Handles different model output formats (some return tuples, others return logits directly).
-    
-    Args:
-        model: The PyTorch model to wrap
-        model_name: Model type identifier
     """
+    
     def __init__(self, model, model_name):
+        """
+        Initialize ModelWrapper.
+        
+        Args:
+            model: PyTorch model
+            model_name: Model type identifier
+        """
+
         super().__init__()
         self.model = model
         self.model_name = model_name
     
     def forward(self, x):
-        """Forward pass that extracts logits from model output."""
+        """
+        Forward pass that extracts logits from model output.
+        
+        Args:
+            x: Input tensor
+        
+        Returns:
+            Logits tensor
+        """
+
         if self.model_name in ['confidence', 'ConfidenceWeightedCNN']:
             logits, _ = self.model(x)
             return logits
@@ -109,6 +115,7 @@ def create_cam(model, model_name, cam_method='gradcam'):
     Raises:
         ValueError: If cam_method is not recognized
     """
+
     wrapper = ModelWrapper(model, model_name)
     target_layer = TARGET_LAYERS[model_name](model)
     
@@ -140,6 +147,7 @@ def calculate_iou(gt_mask, pred_mask, threshold=0.5):
     Returns:
         IOU score (0.0 to 1.0)
     """
+
     gt_bin = (gt_mask > threshold).astype(bool)
     pred_bin = (pred_mask > threshold).astype(bool)
     
@@ -160,6 +168,7 @@ def calculate_dice(gt_mask, pred_mask, threshold=0.5):
     Returns:
         DICE score (0.0 to 1.0)
     """
+
     gt_bin = (gt_mask > threshold).astype(bool)
     pred_bin = (pred_mask > threshold).astype(bool)
     
@@ -179,6 +188,7 @@ def calculate_mae(gt_mask, pred_mask):
     Returns:
         MAE score
     """
+
     return np.mean(np.abs(gt_mask - pred_mask))
 
 def calculate_metrics(gt_mask, pred_mask, gt_threshold=0.5, pred_threshold=0.5):
@@ -194,6 +204,7 @@ def calculate_metrics(gt_mask, pred_mask, gt_threshold=0.5, pred_threshold=0.5):
     Returns:
         Dictionary with keys 'iou', 'dice', 'mae'
     """
+
     return {
         'iou': calculate_iou(gt_mask, pred_mask, max(gt_threshold, pred_threshold)),
         'dice': calculate_dice(gt_mask, pred_mask, max(gt_threshold, pred_threshold)),
@@ -211,6 +222,7 @@ def get_cluster_names():
     Returns:
         List of cluster names: ['Very_Warm', 'Warm', 'Neutral', 'Cool', 'Very_Cool']
     """
+
     return CLUSTER_NAMES
 
 def process_raw_image(raw_path, srgb=False):
@@ -225,6 +237,7 @@ def process_raw_image(raw_path, srgb=False):
     Returns:
         RGB image array (uint8 if srgb=True, uint16 if srgb=False)
     """
+
     with rawpy.imread(raw_path) as raw:
         if srgb:
             rgb = raw.postprocess(half_size=True, use_camera_wb=True, no_auto_bright=False)
@@ -247,6 +260,7 @@ def load_mask(mask_path, target_shape=None):
     Raises:
         FileNotFoundError: If mask file doesn't exist
     """
+    
     if not os.path.exists(mask_path):
         raise FileNotFoundError(f"Mask not found: {mask_path}")
         

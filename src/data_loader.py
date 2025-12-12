@@ -8,10 +8,6 @@ Data Loading Module
 Provides data loading utilities for illuminant estimation training and evaluation.
 Creates PyTorch DataLoaders with appropriate transforms for train/val/test splits.
 Handles image preprocessing (resize, normalization) using ImageNet statistics.
-
-Uses:
-    - config.config for dataset paths and hyperparameters
-    - torchvision for data transforms and ImageFolder datasets
 """
 
 import os

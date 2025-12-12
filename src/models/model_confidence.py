@@ -25,6 +25,14 @@ class ConfidenceWeightedCNN(nn.Module):
     """
     
     def __init__(self, num_classes=NUM_CLASSES, dropout_rate=DROPOUT_RATE):
+        """
+        Initialize ConfidenceWeightedCNN.
+        
+        Args:
+            num_classes: Number of output classes
+            dropout_rate: Dropout probability for regularization
+        """
+
         super(ConfidenceWeightedCNN, self).__init__()
 
         self.conv1 = nn.Conv2d(3, 32, kernel_size=10)
@@ -55,6 +63,17 @@ class ConfidenceWeightedCNN(nn.Module):
         self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
+        """
+        Forward pass through the network.
+        
+        Args:
+            x: Input tensor of shape (batch_size, 3, height, width)
+        
+        Returns:
+            Tuple of (logits, spatial_weights) where logits is shape (batch_size, num_classes)
+            and spatial_weights is shape (batch_size, 1, height, width)
+        """
+        
         # Feature Extraction
         x = self.relu(self.bn1(self.conv1(x)))
         x = self.pool1(x)
@@ -85,7 +104,16 @@ class ConfidenceWeightedCNN(nn.Module):
         return x, spatial_weights
 
     def get_confidence_map(self, x):
-        """Extract confidence map for visualization."""
+        """
+        Extract confidence map for visualization.
+        
+        Args:
+            x: Input tensor of shape (batch_size, 3, height, width)
+        
+        Returns:
+            Confidence map tensor of shape (batch_size, 1, height, width)
+        """
+
         x = self.relu(self.bn1(self.conv1(x)))
         x = self.pool1(x)
         x = self.relu(self.bn2(self.conv2(x)))
