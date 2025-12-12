@@ -556,7 +556,6 @@ def create_batch_visualization(all_results, args):
     plt.tight_layout()
     plt.savefig(out_path, dpi=150, bbox_inches='tight')
     plt.close()
-    print(f"Saved batch visualization: {out_path}")
 
 # ---------- Processing Functions ----------
 def handle_batch_mode(args, model, cluster_mapping):
@@ -887,7 +886,6 @@ def create_single_image_visualization(img_name, original_srgb, final_srgb, base_
     plt.tight_layout()
     plt.savefig(out_path, dpi=150)
     plt.close()
-    print(f"Saved visualization: {out_path}")
 
 # ---------- Main ----------
 def main():

@@ -153,11 +153,9 @@ def generate_heatmaps(model_type, cam_method, layer_name, image_path):
     """
 
     # Load model
-    print(f"\nLoading {model_type} model...")
     model = load_model(model_type)
     
     # Create CAM instance
-    print(f"Initializing {cam_method.upper()}...")
     cam = create_cam(model, model_type, cam_method)
     
     mean_np = np.array(MEAN, dtype=np.float32)
@@ -167,7 +165,6 @@ def generate_heatmaps(model_type, cam_method, layer_name, image_path):
     _, _, _, label_names = get_datasets()
     
     # Process single image
-    print(f"Processing image: {image_path}")
     img_tensor, _ = load_image_from_path(image_path)
     img_tensor = img_tensor.to(DEVICE)
     
@@ -183,7 +180,6 @@ def generate_heatmaps(model_type, cam_method, layer_name, image_path):
     
     # Process images
     processed = []
-    print(f"\nGenerating heatmaps for {len(images_to_process)} image(s)...")
     
     for idx, (img_tensor, true_label, pred_label) in enumerate(images_to_process):
         rgb_image = tensor_to_rgb(img_tensor[0], mean_np, std_np)
@@ -235,10 +231,6 @@ def generate_heatmaps(model_type, cam_method, layer_name, image_path):
     rows = len(processed)
     cols = 1 + NUM_CLASSES
     
-    print(f"\nVisualization layout: {rows} row(s) x {cols} column(s)")
-    print(f"  - Column 0: Original image")
-    print(f"  - Columns 1-{NUM_CLASSES}: CAM visualizations ({NUM_CLASSES} classes)")
-    
     fig, axes = plt.subplots(rows, cols, figsize=(4 * cols, 4 * rows))
     if rows == 1:
         axes = np.expand_dims(axes, axis=0)
@@ -281,8 +273,6 @@ def generate_heatmaps(model_type, cam_method, layer_name, image_path):
     
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
-    
-    print(f"\nSaved visualization to: {save_path}")
 
 
 def interactive_mode():
@@ -304,7 +294,6 @@ def interactive_mode():
     print(f"Using model: {model_type} ({model_path})")
     
     # Load model to get layers
-    print(f"\nLoading model to inspect layers...")
     model = load_model(model_type)
     
     available_layers = get_available_layers(model, model_type)

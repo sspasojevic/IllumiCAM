@@ -97,17 +97,8 @@ def evaluate_single_model(model_name, cam_method, gt_threshold=0.5, pred_thresho
         Dictionary with metrics per cluster and overall averages, or None if error
     """
 
-    try:
-        model = load_model(model_name)
-    except Exception as e:
-        print(f"Failed to load {model_name}: {e}")
-        return None
-    
-    try:
-        cam = create_cam(model, model_name, cam_method)
-    except Exception as e:
-        print(f"Failed to init {cam_method}: {e}")
-        return None
+    model = load_model(model_name)
+    cam = create_cam(model, model_name, cam_method)
     
     print(f"Using CAM Method: {cam_method} on {model_name}")
     
@@ -273,12 +264,12 @@ def evaluate_matrix(gt_threshold=0.0, pred_threshold=0.1):
         print(f"\nEvaluating Model: {model_name}")
         
         for cam_method in CAM_CHOICES:
-            print(f"  Using CAM: {cam_method}")
-            
-            df_results = evaluate_single_model(model_name, cam_method, gt_threshold, pred_threshold)
+            try:
+                df_results = evaluate_single_model(model_name, cam_method, gt_threshold, pred_threshold)
+            except Exception:
+                continue
             
             if df_results is None or df_results.empty:
-                print(f"    -> No results for {model_name}-{cam_method}")
                 continue
             
             # Calculate per-scene averages

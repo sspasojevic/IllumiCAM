@@ -63,7 +63,6 @@ def process_place(place_path, place_name, place_info):
         img_12_path = os.path.join(place_path, f"{place_name}_12.nef")
         
         if not os.path.exists(img_1_path) or not os.path.exists(img_12_path):
-            print(f"Skipping {place_name}: Missing files")
             return
 
         # Read RAWs
@@ -120,7 +119,6 @@ def process_place(place_path, place_name, place_info):
         img_123_path = os.path.join(place_path, f"{place_name}_123.nef")
         
         if not all(os.path.exists(p) for p in [img_1_path, img_12_path, img_13_path, img_123_path]):
-             print(f"Skipping {place_name}: Missing files")
              return
 
         # Load and process to linear RGB

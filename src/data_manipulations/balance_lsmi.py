@@ -115,15 +115,12 @@ def get_patch_chroma(img, mcc_coord):
     
     for idx in gray_patches_indices:
         corners_src = FULL_CELLCHART[idx*4 : (idx+1)*4]
-        try:
-            corners_dst = manual_perspective_transform(corners_src, h_matrix)
-            mask = np.zeros(img.shape[:2], dtype=np.uint8)
-            cv2.fillConvexPoly(mask, corners_dst.astype(np.int32), 1)
-            mean_val = cv2.mean(img, mask=mask)[:3]
-            if np.sum(mean_val) > 0:
-                patch_colors.append(mean_val)
-        except Exception:
-            continue
+        corners_dst = manual_perspective_transform(corners_src, h_matrix)
+        mask = np.zeros(img.shape[:2], dtype=np.uint8)
+        cv2.fillConvexPoly(mask, corners_dst.astype(np.int32), 1)
+        mean_val = cv2.mean(img, mask=mask)[:3]
+        if np.sum(mean_val) > 0:
+            patch_colors.append(mean_val)
             
     if not patch_colors: return None
     avg_color = np.mean(patch_colors, axis=0)
@@ -151,8 +148,6 @@ def extract_illuminants(meta_data, max_samples=None):
         import random
         places = random.sample(places, max_samples)
         
-    print(f"Extracting illuminants from {len(places)} samples...")
-    
     for place in tqdm(places):
         if place not in meta_data: continue
             
@@ -191,22 +186,17 @@ def main():
     if os.path.exists(META_FILE):
         with open(META_FILE, "r") as f:
             meta_data = json.load(f)
-        print(f"Loaded meta.json with {len(meta_data)} entries.")
     else:
-        print("meta.json not found!")
         meta_data = {}
 
     # Extract illuminants
     df = extract_illuminants(meta_data, max_samples=None)
     df = df.drop_duplicates(subset=['place', 'light'])
 
-    print(f"Extracted {len(df)} illuminants from {df['place'].nunique()} scenes.")
-
     # Filter scenes with at least 2 illuminants
     place_counts = df['place'].value_counts()
     valid_places = place_counts[place_counts >= 2].index
     df = df[df['place'].isin(valid_places)].copy()
-    print(f"Filtered to {len(df)} illuminants from {len(valid_places)} scenes (>= 2 lights).")
 
     # Assign clusters
     if os.path.exists(CLUSTER_CENTERS_FILE):
@@ -219,8 +209,6 @@ def main():
         else:
             center_points = centers
             labels = [f"Cluster_{i}" for i in range(len(centers))]
-            
-        print(f"Loaded {len(center_points)} cluster centers.")
         
         center_points = center_points.astype(np.float64)
         X = df[['r', 'g', 'b']].values.astype(np.float64)
@@ -234,9 +222,6 @@ def main():
         # Map cluster index back to label
         cluster_names_map = {i: labels[i] for i in range(len(labels))}
         df['cluster_name'] = df['cluster'].map(cluster_names_map)
-        
-        print("Illuminant cluster counts (before distinct cluster filtering):")
-        print(df['cluster_name'].value_counts())
 
         # Filter scenes with illuminants from at least 2 different clusters
         valid_places_distinct = []
@@ -246,10 +231,6 @@ def main():
                 valid_places_distinct.append(place)
                 
         df = df[df['place'].isin(valid_places_distinct)].copy()
-        print(f"\nFiltered to {len(df)} illuminants from {len(valid_places_distinct)} scenes (>= 2 distinct clusters).")
-        
-        print("Illuminant cluster counts (after distinct cluster filtering):")
-        print(df['cluster_name'].value_counts())
         
         # Balance scenes by rarest cluster
         rarity_order = ["Very_Warm", "Warm", "Very_Cool", "Neutral", "Cool"]
@@ -272,13 +253,10 @@ def main():
                 scene_rarity.append({'place': place, 'rarest_cluster': best_cluster})
                 
         scene_df = pd.DataFrame(scene_rarity)
-        print("\nScene counts by rarest cluster:")
-        print(scene_df['rarest_cluster'].value_counts())
         
         # Balance scenes
         counts = scene_df['rarest_cluster'].value_counts()
         min_count = counts.min()
-        print(f"Target scenes per category: {min_count}")
         
         balanced_places = []
         for cluster in counts.index:
@@ -292,16 +270,8 @@ def main():
         # Filter original dataframe to keep only selected places
         df_balanced = df[df['place'].isin(balanced_places)].copy()
         
-        print(f"\nBalanced dataset size: {len(df_balanced)} illuminants from {len(balanced_places)} scenes.")
-        print("Illuminant cluster counts (after balancing):")
-        print(df_balanced['cluster_name'].value_counts())
-        
         # Save balanced dataset
         df_balanced.to_csv("lsmi_balanced.csv", index=False)
-        print("Saved balanced dataset to lsmi_balanced.csv")
-        
-    else:
-        print("Cluster centers file not found!")
 
 if __name__ == "__main__":
     main()

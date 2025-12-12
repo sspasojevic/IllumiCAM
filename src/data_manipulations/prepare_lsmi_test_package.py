@@ -57,20 +57,16 @@ def main():
     os.makedirs(masks_dir, exist_ok=True)
 
     # Read CSV
-    print(f"Reading {args.csv}...")
     df = pd.read_csv(args.csv)
     target_places = df['place'].unique()
-    print(f"Found {len(target_places)} unique places in CSV.")
 
     # Read Meta
-    print(f"Reading {args.meta}...")
     with open(args.meta, 'r') as f:
         full_meta = json.load(f)
 
     subset_meta = {}
     
     # Process each place
-    print("Processing places...")
     for place in tqdm(target_places):
         if place not in full_meta:
             print(f"Warning: {place} not found in meta.json. Skipping.")
@@ -99,7 +95,6 @@ def main():
         
         # Generate mask if missing
         if not os.path.exists(src_mask):
-             print(f"Mask {src_mask} missing. Generating...")
              generate_lsmi_mixture_maps.process_place(src_place_dir, place, place_info)
         
         if os.path.exists(src_mask):
@@ -121,7 +116,6 @@ def main():
             print(f"Warning: Image {src_image} missing.")
 
     # Save subset meta
-    print("Saving subset meta.json...")
     with open(os.path.join(args.output_dir, "meta.json"), 'w') as f:
         json.dump(subset_meta, f, indent=4)
 

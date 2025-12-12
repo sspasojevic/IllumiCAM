@@ -50,12 +50,9 @@ def load_model(model_name, weights_path=None, eval_mode=True, device=None):
         weights_path = MODEL_PATHS.get(model_name)
     
     if weights_path and os.path.exists(weights_path):
-        try:
-            state_dict = torch.load(weights_path, map_location=device)
-            model.load_state_dict(state_dict, strict=False)
-            print(f"✓ Loaded: {weights_path}")
-        except Exception as e:
-            print(f"✗ Error: {e}")
+        state_dict = torch.load(weights_path, map_location=device)
+        model.load_state_dict(state_dict, strict=False)
+        print(f"✓ Loaded: {weights_path}")
     
     if eval_mode:
         model.eval()

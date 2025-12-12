@@ -241,9 +241,6 @@ def main():
     args = parser.parse_args()
     model_type = args.model_type
     
-    print(f"Using device: {DEVICE}")
-    print(f"\nTraining {model_type.upper()} model")
-    
     # Determine batch size
     if args.batch_size:
         batch_size = args.batch_size
@@ -252,13 +249,8 @@ def main():
     else:
         batch_size = BATCH_SIZE
     
-    print(f"Batch size: {batch_size}")
-    
     # Load datasets
-    print("\nLoading datasets...")
     train_dataset, val_dataset, test_dataset, label_names = get_datasets()
-    print(f"Classes: {label_names}")
-    print(f"Train: {len(train_dataset)}, Val: {len(val_dataset)}, Test: {len(test_dataset)}")
     
     # Create data loaders
     train_loader, val_loader, test_loader = get_dataloaders(
@@ -267,14 +259,8 @@ def main():
     )
     
     # Initialize model
-    print(f"\nInitializing {model_type} model...")
     model_class = MODELS[model_type]
     model = model_class().to(DEVICE)
-    print(model)
-    
-    total_params, trainable_params = count_parameters(model)
-    print(f"\nTotal parameters: {total_params:,}")
-    print(f"Trainable parameters: {trainable_params:,}")
     
     # Setup loss, optimizer, scheduler
     if model_type == 'paper':
@@ -305,10 +291,6 @@ def main():
     
     # Create saved_models directory if it doesn't exist
     os.makedirs(SAVED_MODELS_DIR, exist_ok=True)
-    
-    print("\n" + "="*60)
-    print(f"TRAINING {model_type.upper()} MODEL")
-    print("="*60)
     
     for epoch in range(NUM_EPOCHS):
         # Train
@@ -347,15 +329,12 @@ def main():
         if v_acc > best_val_acc:
             best_val_acc = v_acc
             torch.save(model.state_dict(), model_path)
-            print(f"  -> Saved best model (val_acc: {v_acc:.4f})")
     
     # Plot training curves
     curves_path = os.path.join(VISUALIZATIONS_DIR, f"training_curves_{model_type}.png")
     plot_training_curves(history, curves_path, model_type)
     
-    print("\nTraining completed!")
-    print(f"Best validation accuracy: {best_val_acc:.4f}")
-    print(f"Model saved to {model_path}")
+    print(f"\nTraining completed! Best validation accuracy: {best_val_acc:.4f}")
 
 
 if __name__ == "__main__":

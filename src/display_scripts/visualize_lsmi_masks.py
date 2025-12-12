@@ -119,7 +119,6 @@ def visualize_lsmi_masks(image_path, package_path=None):
     num_lights = place_info["NumOfLights"]
     
     # Load Image
-    print(f"Loading image: {image_path}")
     img = process_raw_image(image_path)
     
     # Load Mask
@@ -128,12 +127,10 @@ def visualize_lsmi_masks(image_path, package_path=None):
         print(f"Error: Mask not found at {mask_path}")
         return
         
-    print(f"Loading mask: {mask_path}")
     mask = np.load(mask_path)
     
     # Resize mask if needed
     if mask.shape[:2] != img.shape[:2]:
-        print(f"Resizing mask from {mask.shape} to {img.shape}")
         mask = cv2.resize(mask, (img.shape[1], img.shape[0]), interpolation=cv2.INTER_LINEAR)
 
     # Load cluster centers (prefer package-specific, fallback to global)
@@ -179,7 +176,6 @@ def visualize_lsmi_masks(image_path, package_path=None):
     save_path = os.path.join(output_dir, f"{place_name}_vis.png")
     plt.savefig(save_path)
     plt.close(fig)
-    print(f"Saved visualization to {save_path}")
 
 def main():
     """
