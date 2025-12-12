@@ -508,7 +508,6 @@ def main():
         
         # Randomly select N images
         import random
-        random.seed(42)  # For reproducibility
         num_to_select = min(args.num_images, len(available_images))
         selected_images = random.sample(available_images, num_to_select)
         print(f"Selected {num_to_select} images: {[os.path.splitext(f)[0] for f in selected_images]}")
