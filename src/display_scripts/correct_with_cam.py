@@ -28,13 +28,13 @@ import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import cv2
 from PIL import Image
-from scipy.io import loadmat
 import json
+import textwrap
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, PROJECT_ROOT)
 
-from config.config import MEAN, STD, DEVICE, IMG_SIZE, NIKON_CCM_MAT, VISUALIZATIONS_DIR, MODEL_PATHS, LSMI_MASKS_DIR, LSMI_TEST_PACKAGE, LSMI_IMAGES_DIR
+from config.config import MEAN, STD, DEVICE, IMG_SIZE, VISUALIZATIONS_DIR, MODEL_PATHS, LSMI_MASKS_DIR, LSMI_TEST_PACKAGE, LSMI_IMAGES_DIR
 from src.utils import load_model, create_cam, process_raw_image, load_mask, CLUSTER_NAMES
 from src.data_loader import get_datasets
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
@@ -45,41 +45,6 @@ CAM_CHOICES = ['gradcam', 'gradcam++', 'scorecam']
 _, _, _, TRAIN_LABELS = get_datasets()
 print(f"Training Label Order (Model Output): {TRAIN_LABELS}")
 
-MAT_PATH = NIKON_CCM_MAT
-def load_nikon_wps_fixed():
-    """Load Nikon reference white points with robust parsing."""
-    print(f"Loading Nikon reference white points from: {MAT_PATH}")
-    mat = loadmat(MAT_PATH)
-    entries = mat['wps_ccms'].reshape(-1)
-
-    illum_names = []
-    illum_wps3 = []
-
-    for e in entries:
-        name = str(e['name'][0])
-        wp2 = np.array(e['wp'][0], dtype=np.float32).reshape(-1)
-
-        if wp2.shape[0] == 2:
-            r_g, b_g = wp2
-            wp3 = np.array([r_g, 1.0, b_g], dtype=np.float32)
-            wp3 = wp3 / wp3.sum()
-        else:
-            wp3 = np.array(e['wp'][0], dtype=np.float32).reshape(-1)
-            wp3 = wp3 / (wp3.sum() + 1e-12)
-
-        illum_names.append(name)
-        illum_wps3.append(wp3)
-
-    illum_wps3 = np.stack(illum_wps3, axis=0)
-
-    print(f"Loaded {len(illum_names)} reference illuminants (Fixed Parsing)")
-    return illum_wps3, illum_names
-
-def choose_nikon_wp_3d(wp_rgb, illuminant_wps, names):
-    """Find closest Nikon reference white point (euclidean in chromaticity)."""
-    distances = np.linalg.norm(illuminant_wps - wp_rgb[None, :], axis=1)
-    idx = int(np.argmin(distances))
-    return illuminant_wps[idx], names[idx], distances[idx]
 
 def angular_error(x, y):
     """Calculate angular error between two RGB vectors."""
@@ -121,22 +86,19 @@ def load_cluster_centers():
     centers = np.load(path, allow_pickle=True).item()
     return centers
 
-def get_wps_for_clusters(illum_wps3, illum_names):
-    """Map each cluster to nearest Nikon white point."""
+def get_wps_for_clusters():
+    """Get white points for each cluster from cluster_centers.npy."""
     centers = load_cluster_centers()
     cluster_wps = {}
 
-    print("\nMapping Clusters to Nikon White Points:")
+    print("\nLoading cluster white points:")
     for name in TRAIN_LABELS:
         wp = centers[name]
         wp_norm = wp / (wp.sum() + 1e-12)
-        ref_wp, ref_name, dist = choose_nikon_wp_3d(wp_norm, illum_wps3, illum_names)
         cluster_wps[name] = {
-            'wp': wp_norm,
-            'ref_name': ref_name,
-            'dist': float(dist)
+            'wp': wp_norm
         }
-        print(f"  {name} -> {ref_name} (dist={dist:.4f})")
+        print(f"  {name}: WP = {wp_norm}")
     return cluster_wps
 
 # ---------- Raw correction ----------
@@ -216,7 +178,7 @@ def view_as_linear(x):
     return np.clip(x, 0.0, 1.0)
 
 # ---------- Processing Functions ----------
-def process_single_image(image_path, model, illum_wps3, illum_names, cluster_mapping, args):
+def process_single_image(image_path, model, cluster_mapping, args):
     """Process a single image and return visualization data."""
     try:
         # Load raw linear image for correction
@@ -390,6 +352,35 @@ def process_single_image(image_path, model, illum_wps3, illum_names, cluster_map
         traceback.print_exc()
         return None
 
+def wrap_title(title, max_length=20):
+    """Wrap title to max 2 lines if it's too long."""
+    # If title already has newlines, only wrap the first line
+    if '\n' in title:
+        lines = title.split('\n', 1)
+        first_line = lines[0]
+        if len(first_line) > max_length:
+            words = first_line.split()
+            if len(words) <= 1:
+                first_line = f"{first_line[:max_length]}\n{first_line[max_length:]}"
+            else:
+                mid = len(words) // 2
+                first_line = f"{' '.join(words[:mid])}\n{' '.join(words[mid:])}"
+        return f"{first_line}\n{lines[1]}" if len(lines) > 1 else first_line
+    
+    # No newlines, wrap if too long
+    if len(title) <= max_length:
+        return title
+    # Try to split at a space near the middle
+    words = title.split()
+    if len(words) <= 1:
+        # Single long word, split at max_length
+        return f"{title[:max_length]}\n{title[max_length:]}"
+    # Find split point
+    mid = len(words) // 2
+    line1 = ' '.join(words[:mid])
+    line2 = ' '.join(words[mid:])
+    return f"{line1}\n{line2}"
+
 def create_batch_visualization(all_results, args):
     """Create a grid visualization for multiple images."""
     num_images = len(all_results)
@@ -423,50 +414,46 @@ def create_batch_visualization(all_results, args):
         row = img_idx // images_per_row
         col_start = (img_idx % images_per_row) * cols_per_image
         
-        # Original
-        ax = plt.subplot(rows, cols, row * cols + col_start + 1)
-        ax.imshow(result['original'])
-        if row == 0 and img_idx == 0:
-            ax.set_title("Original (Raw Linear)")
-        ax.axis('off')
+        # Original (save reference for label positioning)
+        ax_first = plt.subplot(rows, cols, row * cols + col_start + 1)
+        ax_first.imshow(result['original'])
+        if row == 0:
+            ax_first.set_title(wrap_title("Original (Raw Linear)"), fontsize=9)
+        ax_first.axis('off')
         
         # CAM Corrected
         ax = plt.subplot(rows, cols, row * cols + col_start + 2)
         ax.imshow(result['cam_corrected'])
-        if row == 0 and img_idx == 0:
-            ax.set_title("CAM Corrected")
+        if row == 0:
+            ax.set_title(wrap_title("CAM Corrected"), fontsize=9)
         ax.axis('off')
         
         # Base
         ax = plt.subplot(rows, cols, row * cols + col_start + 3)
         ax.imshow(result['base'])
-        if row == 0 and img_idx == 0:
-            ax.set_title("Single Illuminant Assumption")
+        if row == 0:
+            ax.set_title(wrap_title("Single Illuminant Assumption"), fontsize=9)
         ax.axis('off')
         
         # GT Cluster (if available)
         if cols_per_image >= 4 and result['gt_cluster'] is not None:
             ax = plt.subplot(rows, cols, row * cols + col_start + 4)
             ax.imshow(result['gt_cluster'])
-            if row == 0 and img_idx == 0:
+            if row == 0:
                 title = "GT Mask Cluster Corrected"
                 if result['gt_clusters']:
-                    title += f"\n{', '.join(result['gt_clusters'])}"
-                ax.set_title(title)
+                    clusters_str = ', '.join(result['gt_clusters'])
+                    title = f"{title}\n{clusters_str}"
+                ax.set_title(wrap_title(title, max_length=25), fontsize=9)
             ax.axis('off')
         
         # GT Oracle (if available)
         if cols_per_image >= 5 and result['gt_oracle'] is not None:
             ax = plt.subplot(rows, cols, row * cols + col_start + 5)
             ax.imshow(result['gt_oracle'])
-            if row == 0 and img_idx == 0:
-                ax.set_title("GT Mask True Illuminant Corrected")
+            if row == 0:
+                ax.set_title(wrap_title("GT Mask True Illuminant Corrected", max_length=25), fontsize=9)
             ax.axis('off')
-        
-        # Add image name as label
-        if row == 0:
-            fig.text((col_start + cols_per_image / 2) / cols, 1.0 - (row + 0.95) / rows, 
-                    result['img_name'], ha='center', va='top', fontsize=8)
     
     os.makedirs(args.output, exist_ok=True)
     out_path = os.path.join(args.output, f"batch_{num_images}_images.png")
@@ -501,8 +488,7 @@ def main():
 
     # 1) Load resources
     print("Loading resources...")
-    illum_wps3, illum_names = load_nikon_wps_fixed()
-    cluster_mapping = get_wps_for_clusters(illum_wps3, illum_names)
+    cluster_mapping = get_wps_for_clusters()
 
     # 2) Load model
     print(f"Loading model: {args.model}")
@@ -532,7 +518,7 @@ def main():
         for img_file in selected_images:
             img_path = os.path.join(LSMI_IMAGES_DIR, img_file)
             print(f"\nProcessing: {img_file}")
-            result = process_single_image(img_path, model, illum_wps3, illum_names, cluster_mapping, args)
+            result = process_single_image(img_path, model, cluster_mapping, args)
             if result is not None:
                 all_results.append(result)
         
@@ -734,9 +720,6 @@ def main():
                             else:
                                 light_wp = light_rgb
                             
-                            # Find closest Nikon white point for this illuminant
-                            ref_wp, ref_name, wp_dist = choose_nikon_wp_3d(light_wp, illum_wps3, illum_names)
-                            
                             # Apply correction using GT illuminant WP directly
                             light_corrected = apply_correction(raw_linear, light_wp)
                             
@@ -745,7 +728,7 @@ def main():
                             weight_3d = weight[..., None]
                             gt_oracle_accumulated += light_corrected * weight_3d
                             
-                            print(f"  {light_key} RGB {light_rgb} -> WP {ref_name} (dist={wp_dist:.4f})")
+                            print(f"  {light_key} RGB {light_rgb} -> WP {light_wp}")
                         
                         # Normalize by total weight
                         gt_oracle_final = np.where(gt_mask_valid, gt_oracle_accumulated / (gt_total_weight + 1e-12), base_correction)
