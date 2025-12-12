@@ -35,6 +35,7 @@ DATASET_ROOT = os.path.join(PROJECT_ROOT, "dataset")
 LSMI_TEST_PACKAGE = os.path.join(DATA_ROOT, "LSMI_Test_Package")
 LSMI_IMAGES_DIR = os.path.join(LSMI_TEST_PACKAGE, "images")
 LSMI_MASKS_DIR = os.path.join(LSMI_TEST_PACKAGE, "masks")
+LSMI_DATASET_ROOT = os.path.join(DATA_ROOT, "LSMI")
 
 # Models
 SAVED_MODELS_DIR = os.path.join(PROJECT_ROOT, "saved_models")

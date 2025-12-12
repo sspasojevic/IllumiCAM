@@ -28,15 +28,34 @@ from torchvision import transforms
 from PIL import Image
 from tqdm import tqdm
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, PROJECT_ROOT)
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, REPO_ROOT)
 
-from config.config import DEVICE, LSMI_IMAGES_DIR, LSMI_MASKS_DIR, MODEL_PATHS
+from config.config import DEVICE, LSMI_IMAGES_DIR, LSMI_MASKS_DIR, MODEL_PATHS, CLUSTER_CENTERS_PATH, LSMI_TEST_PACKAGE
 from src.utils import (
     load_model, create_cam, ModelWrapper, calculate_metrics,
     process_raw_image, load_mask, CLUSTER_NAMES
 )
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
+import json
+
+def load_cluster_centers(path):
+    data = np.load(path, allow_pickle=True)
+    if data.shape == ():
+        data = data.item()
+    return data
+
+def get_nearest_cluster(rgb, centers):
+    min_dist = float('inf')
+    best_name = "Unknown"
+    query = np.array(rgb)
+    for name, center in centers.items():
+        c = np.array(center)
+        dist = np.linalg.norm(query - c)
+        if dist < min_dist:
+            min_dist = dist
+            best_name = name
+    return best_name
 
 MODEL_CHOICES = list(MODEL_PATHS.keys())
 CAM_CHOICES = ['gradcam', 'gradcam++', 'scorecam']
@@ -101,9 +120,45 @@ def evaluate_single_model(model_name, cam_method, gt_threshold=0.5, pred_thresho
             img_pil = Image.fromarray(img_raw)
             input_tensor = transform(img_pil).unsqueeze(0).to(DEVICE)
             
-            # Load GT Mask
-            mask_path = os.path.join(LSMI_MASKS_DIR, f"{scene_id}_mask.npy")
-            gt_mask = load_mask(mask_path, target_shape=img_rgb.shape)
+            # Load GT Mask (Raw Mixture)
+            mask_path = os.path.join(LSMI_MASKS_DIR, f"{scene_id}.npy")
+            raw_mask = load_mask(mask_path, target_shape=img_rgb.shape)
+            
+            # Convert to Cluster Mask
+            # Load meta and centers if not loaded (should be loaded outside loop ideally, but for now inside or lazily)
+            # To avoid reloading every time, let's assume they are loaded.
+            # Actually, let's load them at the start of evaluate_single_model or pass them in.
+            # For simplicity, I'll load them here but cache them if possible. 
+            # Or better, I will assume `meta` and `centers` are available. 
+            # I will modify the function signature to accept them or load them once.
+            
+            # Let's load them inside the loop for safety/simplicity as performance impact is negligible compared to model inference.
+            meta_path = os.path.join(LSMI_TEST_PACKAGE, "meta.json")
+            with open(meta_path, 'r') as f:
+                meta = json.load(f)
+            
+            centers_path = os.path.join(LSMI_TEST_PACKAGE, "cluster_centers.npy")
+            if not os.path.exists(centers_path):
+                centers_path = CLUSTER_CENTERS_PATH
+            centers = load_cluster_centers(centers_path)
+            
+            place_info = meta[scene_id]
+            num_lights = place_info["NumOfLights"]
+            
+            # Create 5-channel mask
+            gt_mask = np.zeros((raw_mask.shape[0], raw_mask.shape[1], len(CLUSTER_NAMES)), dtype=np.float32)
+            
+            for i in range(min(num_lights, raw_mask.shape[2])):
+                light_key = f"Light{i+1}"
+                light_chroma = place_info[light_key]
+                cluster_name = get_nearest_cluster(light_chroma, centers)
+                
+                if cluster_name in CLUSTER_NAMES:
+                    cluster_idx = CLUSTER_NAMES.index(cluster_name)
+                    gt_mask[:, :, cluster_idx] += raw_mask[:, :, i]
+            
+            # Clip to 1.0 just in case
+            gt_mask = np.clip(gt_mask, 0, 1.0)
             
             # Generate CAM for each cluster
             scene_metrics = {'scene': scene_id}

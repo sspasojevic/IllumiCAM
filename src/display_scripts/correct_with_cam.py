@@ -4,19 +4,19 @@ Sara Spasojevic, Adnan Amir, Ritik Bompilwar
 CS7180 Final Project, Fall 2025
 December 9, 2025
 
-CAM-Guided Spatial Color Correction Tool
+CAM-Guided Spatial White Balance Correction Tool
 
 Performs spatially-aware white balance correction guided by Class Activation Maps.
 Processes RAW NEF images using model predictions to identify illuminant regions,
-then applies appropriate Color Correction Matrices (CCMs) and white balance to
-each region. Uses softmax-weighted blending when multiple illuminants are detected.
+then applies appropriate white balance to each region. Uses softmax-weighted
+blending when multiple illuminants are detected.
 
 Outputs visualization showing original, corrected, and CAM heatmaps.
 
 Uses:
     - config.config for paths and model settings
     - src.utils for model loading, CAM generation, and RAW processing
-    - Nikon D810 reference CCMs from LSMI dataset
+    - Cluster white points for reference
 """
 
 import os
@@ -25,6 +25,8 @@ import argparse
 import numpy as np
 import torch
 import torch.nn.functional as F
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend to avoid Qt display errors
 import matplotlib.pyplot as plt
 import cv2
 from PIL import Image
@@ -35,54 +37,18 @@ sys.path.insert(0, PROJECT_ROOT)
 
 from config.config import MEAN, STD, DEVICE, IMG_SIZE, NIKON_CCM_MAT, VISUALIZATIONS_DIR, MODEL_PATHS, LSMI_MASKS_DIR
 from src.utils import load_model, create_cam, process_raw_image, load_mask, CLUSTER_NAMES
-from src.data_loader import get_datasets
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 
 MODEL_CHOICES = list(MODEL_PATHS.keys())
 CAM_CHOICES = ['gradcam', 'gradcam++', 'scorecam']
 
-_, _, _, TRAIN_LABELS = get_datasets()
+TRAIN_LABELS = CLUSTER_NAMES
 print(f"Training Label Order (Model Output): {TRAIN_LABELS}")
 
-MAT_PATH = NIKON_CCM_MAT
-def load_nikon_ccms_fixed():
-    """Load Nikon reference WPs/CCMs with robust parsing."""
-    print(f"Loading Nikon reference WPs/CCMs from: {MAT_PATH}")
-    mat = loadmat(MAT_PATH)
-    entries = mat['wps_ccms'].reshape(-1)
 
-    illum_names = []
-    illum_wps3 = []
-    illum_ccms = []
 
-    for e in entries:
-        name = str(e['name'][0])
-        wp2 = np.array(e['wp'][0], dtype=np.float32).reshape(-1)
 
-        if wp2.shape[0] == 2:
-            r_g, b_g = wp2
-            wp3 = np.array([r_g, 1.0, b_g], dtype=np.float32)
-            wp3 = wp3 / wp3.sum()
-        else:
-            wp3 = np.array(e['wp'][0], dtype=np.float32).reshape(-1)
-            wp3 = wp3 / (wp3.sum() + 1e-12)
 
-        ccm = np.array(e['ccm'][0], dtype=np.float32).reshape(3, 3)
-        illum_names.append(name)
-        illum_wps3.append(wp3)
-        illum_ccms.append(ccm)
-
-    illum_wps3 = np.stack(illum_wps3, axis=0)
-    illum_ccms = np.stack(illum_ccms, axis=0)
-
-    print(f"Loaded {len(illum_names)} reference illuminants (Fixed Parsing)")
-    return illum_wps3, illum_ccms, illum_names
-
-def choose_nikon_ccm_3d(wp_rgb, illuminant_wps, ccms, names):
-    """Find closest Nikon reference CCM for given white point (euclidean in chromaticity)."""
-    distances = np.linalg.norm(illuminant_wps - wp_rgb[None, :], axis=1)
-    idx = int(np.argmin(distances))
-    return ccms[idx], names[idx], distances[idx]
 
 def load_cluster_centers():
     """Load cluster centers dict from npy file."""
@@ -90,35 +56,29 @@ def load_cluster_centers():
     centers = np.load(path, allow_pickle=True).item()
     return centers
 
-def get_ccms_for_clusters(illum_wps3, illum_ccms, illum_names):
-    """Map each cluster to nearest Nikon CCM & WP."""
+def get_wps_for_clusters():
+    """Get white points for each cluster."""
     centers = load_cluster_centers()
-    cluster_ccms = {}
+    cluster_wps = {}
 
-    print("\nMapping Clusters to Nikon CCMs:")
+    print("\nLoading Cluster White Points:")
     for name in TRAIN_LABELS:
         wp = centers[name]
         wp_norm = wp / (wp.sum() + 1e-12)
-        ccm, ref_name, dist = choose_nikon_ccm_3d(wp_norm, illum_wps3, illum_ccms, illum_names)
-        cluster_ccms[name] = {
-            'ccm': ccm,
-            'wp': wp_norm,
-            'ref_name': ref_name,
-            'dist': float(dist)
+        cluster_wps[name] = {
+            'wp': wp_norm
         }
-        print(f"  {name} -> {ref_name} (dist={dist:.4f})")
-    return cluster_ccms
+        print(f"  {name} -> WP: [{wp_norm[0]:.3f}, {wp_norm[1]:.3f}, {wp_norm[2]:.3f}]")
+    return cluster_wps
 
 # ---------- Raw correction ----------
-def apply_correction(raw_img, wp, ccm, use_ccm=True):
+def apply_correction(raw_img, wp):
     """
-    Apply WB and optionally CCM to linear raw image.
+    Apply white balance to linear raw image.
     
     Args:
         raw_img: Linear raw image
         wp: White point (3-vector)
-        ccm: Color correction matrix (3x3)
-        use_ccm: If True, apply CCM after WB. If False, use WB only.
     """
     raw = raw_img.astype(np.float32)
 
@@ -131,22 +91,13 @@ def apply_correction(raw_img, wp, ccm, use_ccm=True):
     wb = raw / (wp_norm[None, None, :] + 1e-12)
     wb = np.clip(wb, 0.0, None)
 
-    # Apply CCM if requested
-    if use_ccm:
-        h, w, _ = wb.shape
-        rendered = wb.reshape(-1, 3) @ ccm.T
-        rendered = rendered.reshape(h, w, 3)
-        rendered = np.clip(rendered, 0.0, None)
-    else:
-        rendered = wb
-
     # Scale to [0,1] using percentile
-    pmax = np.percentile(rendered, 99.5)
+    pmax = np.percentile(wb, 99.5)
     if pmax > 0:
-        rendered = rendered / (pmax + 1e-12)
-        rendered = np.clip(rendered, 0.0, 1.0)
+        wb = wb / (pmax + 1e-12)
+        wb = np.clip(wb, 0.0, 1.0)
 
-    return rendered
+    return wb
 def normalize_cam_to_0_1(cam):
     """Scale CAM to [0,1] by min/max."""
     mn, mx = float(cam.min()), float(cam.max())
@@ -196,7 +147,7 @@ def view_as_linear(x):
 
 # ---------- Main ----------
 def main():
-    parser = argparse.ArgumentParser(description='Apply CAM-guided Color Correction (improved)')
+    parser = argparse.ArgumentParser(description='Apply CAM-guided White Balance Correction')
     parser.add_argument('--image', type=str, required=True, help='Path to input image (NEF or TIFF)')
     parser.add_argument('--model', type=str, default='standard', choices=MODEL_CHOICES, help='Model type')
     parser.add_argument('--cam', type=str, default='gradcam', choices=CAM_CHOICES, help='CAM method')
@@ -205,14 +156,12 @@ def main():
     parser.add_argument('--threshold', type=float, default=0.10, help='Per-pixel threshold on softmax weight to consider a cluster "used" (default: 0.10)')
     parser.add_argument('--smooth_ksize', type=int, default=41, help='Gaussian blur kernel size for smoothing CAM masks (odd)')
     parser.add_argument('--temp', type=float, default=0.7, help='Softmax temperature (lower -> sharper selection).')
-    parser.add_argument('--use-ccm', action='store_true', help='Apply CCM correction after white balance (default: WB only)')
     parser.add_argument('--debug', action='store_true', help='Save extra debug images')
     args = parser.parse_args()
 
     # 1) Load resources
     print("Loading resources...")
-    illum_wps3, illum_ccms, illum_names = load_nikon_ccms_fixed()
-    cluster_mapping = get_ccms_for_clusters(illum_wps3, illum_ccms, illum_names)
+    cluster_mapping = get_wps_for_clusters()
 
     # 2) Load model
     print(f"Loading model: {args.model}")
@@ -303,11 +252,9 @@ def main():
 
     # 8) Precompute corrected images per cluster
     corrected_per_cluster = {}
-    use_ccm = args.use_ccm
     for name in TRAIN_LABELS:
         wp = cluster_mapping[name]['wp']
-        ccm = cluster_mapping[name]['ccm']
-        corrected_per_cluster[name] = apply_correction(raw_linear, wp, ccm, use_ccm=use_ccm)
+        corrected_per_cluster[name] = apply_correction(raw_linear, wp)
 
     # Compute base correction (predicted class)
     base_correction = corrected_per_cluster[pred_class]
@@ -328,92 +275,207 @@ def main():
 
     # 10) Compute GT mask correction if available
     gt_corrected_srgb = None
+    gt_illum_corrected_srgb = None  # Oracle correction using illumination map
+    gt_mask_vis = None  # For visualization
     img_name = os.path.splitext(os.path.basename(args.image))[0]
-    mask_path = os.path.join(LSMI_MASKS_DIR, f"{img_name}_mask.npy")
+    mask_path = os.path.join(LSMI_MASKS_DIR, f"{img_name}.npy")
+    meta_path = os.path.join(os.path.dirname(LSMI_MASKS_DIR), 'meta.json')
     
-    if os.path.exists(mask_path):
+    if os.path.exists(mask_path) and os.path.exists(meta_path):
         print("Loading GT mask for comparison...")
         try:
-            gt_mask = load_mask(mask_path, target_shape=raw_linear.shape[:2])
-            
-            # Blend using GT mask weights
-            gt_accumulated = np.zeros_like(raw_linear, dtype=np.float32)
-            for name in TRAIN_LABELS:
-                cluster_idx = CLUSTER_NAMES.index(name)
-                weight = gt_mask[:, :, cluster_idx]
-                weight_3d = weight[..., None]
-                gt_accumulated += corrected_per_cluster[name] * weight_3d
-            
-            # Normalize by total weight
-            gt_total_weight = gt_mask.sum(axis=-1, keepdims=True)
-            gt_mask_valid = gt_total_weight > 1e-6
-            gt_final = np.where(gt_mask_valid, gt_accumulated / (gt_total_weight + 1e-12), base_correction)
-            gt_corrected_srgb = lin_to_srgb(gt_final)
-            print("GT mask correction computed")
+            import json
+            # Load metadata to get illuminant information
+            with open(meta_path, 'r') as f:
+                metadata = json.load(f)
+           
+           # Get scene metadata
+            if img_name not in metadata:
+                print(f"  No metadata found for {img_name}")
+            else:
+                scene_meta = metadata[img_name]
+                num_lights = scene_meta.get('NumOfLights', 0)
+                
+                if num_lights == 0:
+                    print(f"  Scene has no lights")
+                else:
+                    # Load mixture mask
+                    mixture_mask = np.load(mask_path)
+                    if mixture_mask.shape[:2] != raw_linear.shape[:2]:
+                        h, w = raw_linear.shape[:2]
+                        mixture_mask = cv2.resize(mixture_mask, (w, h), interpolation=cv2.INTER_LINEAR)
+                    
+                    # Get illuminants and map to clusters
+                    illum_wps = []
+                    for i in range(1, num_lights + 1):
+                        light_key = f'Light{i}'
+                        if light_key in scene_meta:
+                            chrom = scene_meta[light_key]  # This is already a list [r/g, 1, b/g]
+                            # Convert chromaticity to white point  (r/g, g/g=1, b/g) -> (r, g, b)
+                            wp = np.array(chrom, dtype=np.float32)
+                            wp = wp / (wp.sum() + 1e-12)
+                            illum_wps.append(wp)
+                    
+                    if len(illum_wps) == num_lights:
+                        # Map each illuminant WP to nearest cluster
+                        illum_clusters = []
+                        for wp in illum_wps:
+                            # Find nearest cluster
+                            min_dist = float('inf')
+                            best_cluster = None
+                            for name in TRAIN_LABELS:
+                                cluster_wp = cluster_mapping[name]['wp']
+                                dist = np.linalg.norm(wp - cluster_wp)
+                                if dist < min_dist:
+                                    min_dist = dist
+                                    best_cluster = name
+                            illum_clusters.append(best_cluster)
+                        
+                        print(f"  Mapped {num_lights} illuminants to clusters: {illum_clusters}")
+                        
+                        # Apply GT mixture-based correction
+                        gt_accumulated = np.zeros_like(raw_linear, dtype=np.float32)
+                        for i, cluster_name in enumerate(illum_clusters):
+                            if i < mixture_mask.shape[2]:
+                                weight = mixture_mask[:, :, i]
+                                weight_3d = weight[..., None]
+                                gt_accumulated += corrected_per_cluster[cluster_name] * weight_3d
+                        
+                        # Normalize by total weight
+                        gt_total_weight = mixture_mask.sum(axis=-1, keepdims=True)
+                        gt_mask_valid = gt_total_weight > 1e-6
+                        gt_final = np.where(gt_mask_valid, gt_accumulated / (gt_total_weight + 1e-12), base_correction)
+                        gt_corrected_srgb = lin_to_srgb(gt_final)
+                        
+                        # Create visualization of GT mask (sum across channels for heatmap)
+                        if mixture_mask.shape[2] > 0:
+                            gt_mask_vis = mixture_mask[:, :, 0]  # Show first channel
+                        
+                        print("  GT mask correction computed")
+                        
+                        # Create GT illumination map correction (oracle)
+                        # This creates a per-pixel RGB illuminant map and divides by it directly
+                        # Following LSMI paper: ℓ_ab = α*ℓ_a + (1-α)*ℓ_b
+                        print("  Computing GT illumination map correction (oracle)...")
+                        illum_map = np.zeros_like(raw_linear, dtype=np.float32)
+                        
+                        for i in range(num_lights):
+                            if i < mixture_mask.shape[2]:
+                                # Get the illuminant chromaticity [r/g, g/g=1, b/g]
+                                light_chrom = illum_wps[i]  # This is already the chromaticity
+                                
+                                # Weight by mixture mask (α for light 0, (1-α) for light 1, etc.)
+                                weight = mixture_mask[:, :, i]
+                                weight_3d = weight[..., None]
+                                
+                                # Add weighted illuminant color to the map
+                                # ℓ_ab = α*ℓ_a + (1-α)*ℓ_b
+                                illum_map += light_chrom[None, None, :] * weight_3d
+                        
+                        # The mixture weights already sum to 1, so illum_map is the final per-pixel illuminant
+                        # Apply white balance by dividing by illumination map
+                        gt_illum_corrected = raw_linear / (illum_map + 1e-12)
+                        gt_illum_corrected = np.clip(gt_illum_corrected, 0.0, None)
+                        
+                        # Scale to [0,1] using percentile
+                        pmax = np.percentile(gt_illum_corrected, 99.5)
+                        if pmax > 0:
+                            gt_illum_corrected = gt_illum_corrected / (pmax + 1e-12)
+                            gt_illum_corrected = np.clip(gt_illum_corrected, 0.0, 1.0)
+                        
+                        gt_illum_corrected_srgb = lin_to_srgb(gt_illum_corrected)
+                        print("  GT illumination map correction computed")
         except Exception as e:
             print(f"Could not load GT mask: {e}")
+            import traceback
+            traceback.print_exc()
     
     # 11) Convert to sRGB for visualization
     final_srgb = lin_to_srgb(final_image)
-    base_srgb = lin_to_srgb(base_correction)
-    original_vis = view_as_linear(raw_linear)
+    base_srgb = lin_to_srgb(base_correction)  # Global correction based on predicted class
+    
+    # Load original image as sRGB using camera white balance
+    original_srgb = process_raw_image(args.image, srgb=True).astype(np.float32) / 255.0
 
     # 12) Save visualization
     print("Saving visualization...")
     os.makedirs(args.output, exist_ok=True)
 
-    # Prepare figure layout
-    used_list = sorted(list(used_clusters))
-    num_cam_plots = max(1, len(used_list))
-    
-    # Add extra column for GT correction if available
-    top_row_imgs = 3  # original, cam corrected, base
-    if gt_corrected_srgb is not None:
-        top_row_imgs = 4  # add GT corrected
-    
-    cols = max(top_row_imgs, num_cam_plots + 2)
-    rows = 2
-    fig = plt.figure(figsize=(4*cols, 4*rows))
-
-    correction_type = "WB + CCM" if args.use_ccm else "WB Only"
-    
-    # Top row: Original
-    ax = plt.subplot(rows, cols, 1)
-    ax.imshow(original_vis)
-    ax.set_title("Original (Raw Linear)")
-    ax.axis('off')
-
-    # Top row: CAM Corrected
-    ax = plt.subplot(rows, cols, 2)
-    ax.imshow(final_srgb)
-    ax.set_title(f"CAM Corrected\n{correction_type}")
-    ax.axis('off')
-
-    # Top row: Base Correction
-    ax = plt.subplot(rows, cols, 3)
-    ax.imshow(base_srgb)
-    ax.set_title(f"Base Correction ({correction_type})\n(pred/fallback)")
-    ax.axis('off')
-    
-    # Top row: GT Corrected (if available)
-    if gt_corrected_srgb is not None:
-        ax = plt.subplot(rows, cols, 4)
+    # Create figure with original and corrected images
+    if gt_corrected_srgb is not None and gt_illum_corrected_srgb is not None:
+        # Show 2x2 grid: original, CAM, GT cluster, GT illum map
+        fig = plt.figure(figsize=(20, 20))
+        
+        # Top left: Original (sRGB)
+        ax = plt.subplot(2, 2, 1)
+        ax.imshow(original_srgb)
+        ax.set_title(f"Original (sRGB)", fontsize=18)
+        ax.axis('off')
+        
+        # Top right: CAM corrected
+        ax = plt.subplot(2, 2, 2)
+        ax.imshow(final_srgb)
+        ax.set_title(f"CAM White Balance Corrected", fontsize=18)
+        ax.axis('off')
+        
+        # Bottom left: GT cluster corrected
+        ax = plt.subplot(2, 2, 3)
         ax.imshow(gt_corrected_srgb)
-        ax.set_title(f"GT Mask Corrected\n{correction_type}")
+        ax.set_title(f"GT Cluster Corrected", fontsize=18)
+        ax.axis('off')
+        
+        # Bottom right: GT illumination map corrected (oracle)
+        ax = plt.subplot(2, 2, 4)
+        ax.imshow(gt_illum_corrected_srgb)
+        ax.set_title(f"GT Illumination Map (Oracle)", fontsize=18)
+        ax.axis('off')
+    elif gt_corrected_srgb is not None:
+        # Show 1x2 grid: original, CAM corrected, GT corrected
+        fig = plt.figure(figsize=(30, 10))
+        
+        # Left: Original (sRGB)
+        ax = plt.subplot(1, 3, 1)
+        ax.imshow(original_srgb)
+        ax.set_title(f"Original (sRGB)", fontsize=18)
+        ax.axis('off')
+        
+        # Middle: CAM corrected
+        ax = plt.subplot(1, 3, 2)
+        ax.imshow(final_srgb)
+        ax.set_title(f"CAM White Balance Corrected", fontsize=18)
+        ax.axis('off')
+        
+        # Right: GT corrected
+        ax = plt.subplot(1, 3, 3)
+        ax.imshow(gt_corrected_srgb)
+        ax.set_title(f"GT Mask White Balance Corrected", fontsize=18)
+        ax.axis('off')
+    else:
+        # Show 1x3 grid: original, global correction, CAM corrected
+        fig = plt.figure(figsize=(30, 10))
+        
+        # Left: Original (sRGB)
+        ax = plt.subplot(1, 3, 1)
+        ax.imshow(original_srgb)
+        ax.set_title(f"Original (sRGB)", fontsize=18)
+        ax.axis('off')
+        
+        # Middle: Global illumination correction
+        ax = plt.subplot(1, 3, 2)
+        ax.imshow(base_srgb)
+        ax.set_title(f"Global Correction ({pred_class})", fontsize=18)
+        ax.axis('off')
+        
+        # Right: CAM corrected
+        ax = plt.subplot(1, 3, 3)
+        ax.imshow(final_srgb)
+        ax.set_title(f"CAM White Balance Corrected", fontsize=18)
         ax.axis('off')
 
-    # Bottom row: show the used CAM heatmaps and their max weights
-    for i, name in enumerate(used_list):
-        ax = plt.subplot(rows, cols, cols + i + 1)
-        hmap = cams_norm[name]
-        ax.imshow(hmap, cmap='jet')
-        ax.set_title(f"CAM: {name}\nmaxW={cluster_max_weights[name]:.3f}")
-        ax.axis('off')
-
-    correction_suffix = "wb_ccm" if args.use_ccm else "wb_only"
+    correction_suffix = "wb_only"
     out_path = os.path.join(args.output, f"{img_name}_corrected_{correction_suffix}.png")
     plt.tight_layout()
-    plt.savefig(out_path, dpi=150)
+    plt.savefig(out_path, dpi=150, bbox_inches='tight')
     plt.close()
     print(f"Saved visualization: {out_path}")
 
@@ -433,11 +495,10 @@ def main():
 
     # Print summary of what was used
     print("Summary:")
-    print(f"  Correction mode: {'White Balance + CCM' if args.use_ccm else 'White Balance Only'}")
+    print(f"  Correction mode: White Balance Only")
     print(f"  Predicted class: {pred_class}")
     print(f"  Clusters with max softmax >= {args.threshold:.2f}: {sorted(list(used_clusters))}")
     print("Done.")
 
 if __name__ == "__main__":
     main()
-
